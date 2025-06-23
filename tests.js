@@ -10,7 +10,6 @@
 import { test, describe, it, before } from 'node:test';
 import assert from 'node:assert';
 import createSchema from './src/index.js';
-import { SchemaManager } from './src/SchemaManager.js';
 import { Schema } from './src/Schema.js';
 import * as flatted from 'flatted';
 
@@ -22,7 +21,7 @@ function assertError(errors, fieldName, expectedCode) {
 }
 
 
-describe('1. Core Architecture and API', () => {
+describe('1. Core API (`createSchema`)', () => {
 
   it('should export a function `createSchema`', () => {
     assert.strictEqual(typeof createSchema, 'function');
@@ -39,49 +38,37 @@ describe('1. Core Architecture and API', () => {
     assert.ok(mySchema instanceof Schema, 'Did not return a Schema instance');
   });
 
-  describe('SchemaManager', () => {
-    let manager;
-    before(() => {
-      manager = new SchemaManager();
-    });
-
-    it('should add a type handler correctly', () => {
-      const handler = () => {};
-      manager.addType('testType', handler);
-      assert.strictEqual(manager.types.testType, handler);
-    });
-
-    it('should throw when adding a non-function type handler', () => {
-      assert.throws(() => manager.addType('badType', 'not-a-function'), /Type handler for 'badType' must be a function/);
-    });
-
-    it('should add a validator handler correctly', () => {
-      const handler = () => {};
-      manager.addValidator('testValidator', handler);
-      assert.strictEqual(manager.validators.testValidator, handler);
-    });
-
-    it('should throw when adding a non-function validator handler', () => {
-      assert.throws(() => manager.addValidator('badValidator', 'not-a-function'), /Validator handler for 'badValidator' must be a function/);
-    });
-
-    it('should install a plugin correctly', () => {
-      let installed = false;
-      const plugin = {
-        install(m) {
-          assert.strictEqual(m, manager, 'Plugin install did not receive the manager instance');
-          installed = true;
-        }
-      };
-      manager.use(plugin);
-      assert.ok(installed, 'Plugin install method was not called');
-    });
-
-    it('should throw when installing a plugin without an `install` method', () => {
-      const badPlugin = {};
-      assert.throws(() => manager.use(badPlugin), /Plugin must have an install method/);
-    });
+  it('should allow adding a type handler and using it', async () => {
+      createSchema.addType('custom-string', ctx => `custom-${ctx.value}`);
+      const schema = createSchema({ name: { type: 'custom-string' } });
+      const { validatedObject } = await schema.validate({ name: 'test' });
+      assert.strictEqual(validatedObject.name, 'custom-test');
   });
+
+  it('should allow adding a validator and using it', async () => {
+      createSchema.addValidator('must-be-awesome', ctx => {
+          if (ctx.value !== 'awesome') {
+              ctx.throwParamError('NOT_AWESOME', 'This field must be awesome');
+          }
+      });
+      const schema = createSchema({ framework: { type: 'string', 'must-be-awesome': true }});
+      const { errors } = await schema.validate({ framework: 'good' });
+      assertError(errors, 'framework', 'NOT_AWESOME');
+  });
+
+  it('should throw when adding a non-function type handler', () => {
+    assert.throws(() => createSchema.addType('badType', 'not-a-function'), /Type handler for 'badType' must be a function/);
+  });
+
+  it('should throw when adding a non-function validator handler', () => {
+    assert.throws(() => createSchema.addValidator('badValidator', 'not-a-function'), /Validator handler for 'badValidator' must be a function/);
+  });
+
+  it('should throw when using a plugin without an `install` method', () => {
+    const badPlugin = {};
+    assert.throws(() => createSchema.use(badPlugin), /Plugin must have an install method/);
+  });
+
 });
 
 describe('2. Core Validation Logic (`Schema.js`)', () => {
@@ -192,6 +179,7 @@ describe('3. Core Plugin: Type Handlers', () => {
     { type: 'string', input: { field: 123 }, expected: '123' },
     { type: 'string', input: { field: null }, error: 'NOT_NULLABLE' },
     { type: 'string', input: { field: undefined }, expected: undefined }, // `_validateField` exits early
+    { type: 'string', input: { field: {} }, error: 'TYPE_CAST_FAILED' },
     
     // Number
     { type: 'number', input: { field: '42.5' }, expected: 42.5 },
@@ -338,31 +326,26 @@ describe('5. Extensibility: Custom Plugins', () => {
   it('should allow defining and using a custom plugin', async () => {
     // 1. Define the plugin
     const myPlugin = {
-      install(manager) {
-        manager.addType('hexColor', (ctx) => {
+      install(api) {
+        api.addType('hexColor', (ctx) => {
           if (typeof ctx.value !== 'string' || !/^#[0-9a-fA-F]{6}$/.test(ctx.value)) {
-            throw ctx.schema._typeError(ctx.fieldName);
+            ctx.throwTypeError();
           }
           return ctx.value.toLowerCase();
         });
-        manager.addValidator('isAwesome', (ctx) => {
+        api.addValidator('isAwesome', (ctx) => {
           if (ctx.parameterValue === true && ctx.value !== 'awesome') {
-            throw ctx.schema._paramError(ctx.fieldName, 'NOT_AWESOME', 'This field must be awesome');
+            ctx.throwParamError('NOT_AWESOME', 'This field must be awesome');
           }
         });
       }
     };
 
-    // 2. Install it via `use()` on a fresh instance to ensure test isolation
-    const manager = new SchemaManager();
-    const localCreateSchema = (structure) => manager.create(structure);
-    localCreateSchema.use = manager.use.bind(manager);
-    const corePlugin = (await import('./src/CorePlugin.js')).default;
-    localCreateSchema.use(corePlugin);
-    localCreateSchema.use(myPlugin);
+    // 2. Install it via `use()` on the global factory
+    createSchema.use(myPlugin);
 
     // 3. Use the new rules in a schema
-    const schema = localCreateSchema({
+    const schema = createSchema({
       color: { type: 'hexColor' },
       mood: { type: 'string', isAwesome: true },
     });

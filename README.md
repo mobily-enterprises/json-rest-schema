@@ -33,7 +33,7 @@ async function validateUser() {
   // The validate method is async, so we use await
   const { validatedObject, errors } = await userSchema.validate(userInput);
 
-  // Check if there were any errors
+  // Check if there were any errors by seeing if the errors object has keys
   if (Object.keys(errors).length > 0) {
     console.log("Validation failed!");
     console.log(errors);
@@ -67,7 +67,7 @@ This object contains the data after all casting and transformations have been ap
 
 This is your primary tool for handling validation failures.
 
-* **It's a Map, Not an Array:** The `errors` object is a map where keys are the field names that failed. This allows you to instantly check if a specific field has an error: `if (result.errors.age) { ... }`.
+* **It's a Map, Not an Array:** The `errors` object is a map where keys are the field names that failed. This allows you to instantly check if a specific field has an error: `if (errors.age) { ... }`.
 * **Rich Error Structure:** Each error in the map is a detailed object: `{ code, message, params }`.
 
 Let's look at an example with invalid data:
@@ -92,24 +92,19 @@ The output would look like this:
     "field": "username",
     "code": "MIN_LENGTH",
     "message": "Length must be at least 3 characters.",
-    "params": {
-      "min": 3,
-      "actual": 2
-    }
+    "params": { "min": 3, "actual": 2 }
   },
   "email": {
     "field": "email",
     "code": "REQUIRED",
-    "message": "Field is required"
+    "message": "Field is required",
+    "params": {}
   },
   "age": {
     "field": "age",
     "code": "MIN_VALUE",
     "message": "Value must be at least 18.",
-    "params": {
-      "min": 18,
-      "actual": 16
-    }
+    "params": { "min": 18, "actual": 16 }
   }
 }
 ```
@@ -120,9 +115,67 @@ The output would look like this:
 
 ---
 
-## 3. Extending the Library: Custom Rules
+## 3. Built-in Rules Reference
 
-The real power of the library comes from its extensibility. You can easily add your own reusable types and validators.
+Here is a complete list of all types and validators available out of the box.
+
+### Built-in Types (Casting Rules)
+
+A field's `type` defines how the input value will be converted before any other validation rules are run.
+
+| Type Name | Description |
+|---|---|
+| `string` | Converts the input to a string. By default, it trims whitespace. Fails if the input is an object or array. |
+| `number` | Converts the input to a number. An empty string, `null`, or `undefined` will be cast to `0`. |
+| `boolean`| Converts the input to a boolean. Recognizes `1`, `'true'`, and `'on'` as `true`. All other values become `false`. |
+| `array` | Ensures the value is an array. If the input is not already an array, it will be wrapped in one (e.g., `'tag1'` becomes `['tag1']`). |
+| `id` | Parses the value into an integer, specifically for identifiers. It will fail if the input cannot be cleanly parsed as a number. |
+| `date` | Converts a valid date string or timestamp into a `YYYY-MM-DD` formatted string. |
+| `dateTime`| Converts a valid date string or timestamp into a `YYYY-MM-DD HH:MM:SS` formatted string. |
+| `timestamp`| Converts the input to a number, suitable for storing Unix timestamps. |
+| `serialize`| Converts any JavaScript value (including objects with circular references) into a single JSON-like string using `flatted`. |
+| `object` | Passes the value through unchanged. Assumes the input is already an object. |
+| `blob` | Passes the value through unchanged. Intended for binary data like files that don't need casting. |
+| `none` | The "identity" type. Passes the value through completely unchanged without any casting. |
+
+### Built-in Validators (Validation Parameters)
+
+Validators are rules that run after a value has been cast to its proper type.
+
+| Parameter | Description |
+|---|---|
+| `required: true` | The field must be present in the input object. Fails if the key is `undefined`. |
+| `min: <number>` | For `string` types, validates the minimum character length. For `number` types, validates the minimum value. |
+| `max: <number>` | For `string` types, validates the maximum character length. For `number` types, validates the maximum value. |
+| `notEmpty: true` | The field cannot be an empty string (`''`). This is different from `required`, as an empty string is still a defined value. |
+| `length: <number>`| For `string` types, it **truncates** the string to the specified length. For `number` types, it throws an error if the number of digits in the original input exceeds the specified length. |
+| `canBeNull: true`| Allows the value for this field to be `null`. By default, `null` is not allowed. |
+| `emptyAsNull: true`| If the input value is an empty string (`''`), it will be cast to `null` before other validators run. |
+| `lowercase: true` | **Transforms** the string to all lowercase. |
+| `uppercase: true` | **Transforms** the string to all uppercase. |
+| `validator: <function>`| Allows you to provide your own custom validation function for complex, one-off logic. |
+| `default: <value>` | If the field is not present in the input object and the entire object is valid, this value will be used. Can be a value or a function that returns a value. |
+
+---
+
+## 4. Extending the Library: Custom Rules
+
+The real power of the library comes from its extensibility. You can easily add your own reusable types and validators. When you do this, you'll be passed a powerful `context` object.
+
+### The `context` Object
+
+Every custom type and validator handler receives a `context` object as its only argument. This object is your toolbox, giving you all the information you need to perform complex logic. Here are its properties:
+
+* **`value`**: The current value of the field being processed. Be aware that this value may have already been changed by the type handler or a previous validator.
+* **`fieldName`**: A string containing the name of the field currently being validated (e.g., `'username'`).
+* **`object`**: The entire object that is being validated. Its properties reflect the data *after* any casting or transformations have been applied up to this point. This is useful for cross-field validation.
+* **`valueBeforeCast`**: The original, raw value for the field, exactly as it was in the input object before any type casting occurred.
+* **`objectBeforeCast`**: The original, raw input object, before any modifications were made.
+* **`definition`**: The schema definition object for the current field. For a field defined as `{ type: 'string', min: 5 }`, this would be that exact object.
+* **`parameterName`**: *(For validators only)* The name of the validation rule currently being executed (e.g., `'min'`).
+* **`parameterValue`**: *(For validators only)* The value of the validation rule currently being executed (e.g., the `5` in `min: 5`).
+* **`throwTypeError()`**: A function you can call to throw a standardized `TYPE_CAST_FAILED` error. This is the preferred way to report an error from within a type handler.
+* **`throwParamError(code, message, params)`**: A function you can call to throw a standardized validation error from within a validator. It accepts a custom error `code`, a `message`, and an optional `params` object.
 
 ### Creating a Custom Validator
 
@@ -136,9 +189,8 @@ createSchema.addValidator('slug', (context) => {
   const slugRegex = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
   if (typeof context.value !== 'string' || !slugRegex.test(context.value)) {
-    // Throw a structured error if validation fails
-    throw context.schema._paramError(
-      context.fieldName,
+    // Use the public context method to throw a standardized error
+    context.throwParamError(
       'INVALID_SLUG', // Custom error code
       'Value must be a valid slug (e.g., my-post).'
     );
@@ -163,7 +215,8 @@ createSchema.addType('csv', (context) => {
     return [];
   }
   if (typeof context.value !== 'string') {
-    throw context.schema._typeError(context.fieldName);
+    // Use the public context method to throw a standardized type error
+    context.throwTypeError();
   }
   // Trim whitespace from each item
   return context.value.split(',').map(item => item.trim());
@@ -184,20 +237,26 @@ console.log(validatedObject.tags);
 
 ---
 
-## 4. Advanced: Creating a Plugin
+## 5. Advanced: Creating a Plugin
 
 If you create a lot of custom types and validators for your project, you can bundle them into a single, reusable **Plugin**. A plugin is just an object with an `install` method.
 
 ```javascript
 // my-custom-plugin.js
 const MyCustomPlugin = {
-  install(manager) {
-    // The manager is the same object we used before,
-    // so it has .addType() and .addValidator() methods.
+  install(manager) { // The 'manager' object has .addType and .addValidator
+    manager.addType('csv', context => {
+        if (context.value === undefined || context.value === null) return [];
+        if (typeof context.value !== 'string') context.throwTypeError();
+        return context.value.split(',').map(item => item.trim());
+    });
     
-    manager.addType('csv', context => { /* ...as above... */ });
-    
-    manager.addValidator('slug', context => { /* ...as above... */ });
+    manager.addValidator('slug', context => {
+        const slugRegex = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+        if (typeof context.value !== 'string' || !slugRegex.test(context.value)) {
+            context.throwParamError('INVALID_SLUG', 'Value must be a valid slug.');
+        }
+    });
   }
 };
 
@@ -218,4 +277,3 @@ const mySchema = createSchema({
 ```
 
 This makes your custom rules portable and keeps your main application setup clean.
-

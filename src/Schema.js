@@ -23,6 +23,8 @@
  * @property {{canBeNull: boolean, emptyAsNull: boolean}} computedOptions - Calculated options.
  * @property {string} [parameterName] - The name of the validator parameter being processed.
  * @property {any} [parameterValue] - The value of the validator parameter.
+ * @property {function(): void} throwTypeError - Throws a standardized type casting error.
+ * @property {function(string, string, object=): void} throwParamError - Throws a standardized parameter validation error.
  */
 
 
@@ -114,7 +116,15 @@ export class Schema {
       objectBeforeCast: object,
       valueBeforeCast: object[fieldName],
       options,
-      computedOptions: { canBeNull: canBeNull || emptyAsNull, emptyAsNull }
+      computedOptions: { canBeNull: canBeNull || emptyAsNull, emptyAsNull },
+
+      // NEW: Public API for throwing standardized errors from within plugins/handlers
+      throwTypeError: () => {
+        throw this._typeError(fieldName);
+      },
+      throwParamError: (code, message, params) => {
+        throw this._paramError(fieldName, code, message, params);
+      }
     };
 
     // --- 2. Type Casting ---

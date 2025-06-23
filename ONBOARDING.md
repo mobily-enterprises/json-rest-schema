@@ -1,173 +1,84 @@
-# Developer Onboarding & Architectural Deep Dive
+# ONBOARDING.md - Understanding the `json-rest-api-schema` Library Architecture
 
-Welcome to the project! This document is the definitive guide to understanding the internal architecture, design patterns, and control flow of this library. Its purpose is to get you, a developer working on this codebase, up to speed as quickly and thoroughly as possible.
-
-We will not just cover *what* the code does, but *why* it does it that way.
-
-## 1. Guiding Philosophy & Core Problem
-
-This library was created to solve a common problem: server-side data validation and casting that is **lightweight, dependency-free, and infinitely extensible**. While larger libraries like Zod or Joi are excellent, they can be overkill for projects where bundle size and simplicity are paramount.
-
-Our architecture is therefore guided by two principles:
-
-1.  **Extreme Extensibility:** The core must be minimal and stable. All validation rules, including the built-in ones, are implemented as optional, pluggable components. A developer should **never** need to fork the library to add custom, project-specific logic. This is achieved via a simple but powerful plugin system.
-2.  **Aggressive Separation of Concerns:** Each component has a single, well-defined responsibility. This makes the codebase predictable and prevents the kind of "spaghetti code" that can plague validation logic.
-    * **Manager:** Handles registration only.
-    * **Schema:** Handles execution only.
-    * **Plugins:** Provide rules only.
+Welcome to the `json-rest-api-schema` project! This document aims to demystify the library's internal structure and design philosophy. If you're looking to contribute, extend its functionality, or simply understand how it works under the hood, you're in the right place.
 
 ---
 
-## 2. Architectural Deep Dive: The Three Pillars
+## 1. The Core Philosophy: Simplicity and Extensibility
 
-The entire library is composed of three main components. Understanding their explicit roles and how they interact is the key to understanding the whole system.
+Our primary goal for this library is to provide a robust, extensible, and **easy-to-understand** mechanism for defining and validating data schemas. We achieve this by:
 
-### Pillar 1: `src/SchemaManager.js` - The Registrar
-
-* **Core Responsibility:** To act as a central registry for all available "tools" (types and validators). It is, in essence, a service locator for validation functions.
-* **How it Works:** This is a simple class that holds two key-value objects: `this.types` and `this.validators`. The `.addType()` and `.addValidator()` methods are simple setters that populate these objects, mapping a string name (e.g., `'string'`) to a handler function.
-* **Key Design Decision - Decoupling:** This class knows *what* rules exist but has **no idea** how or when they will be executed. It decouples rule **definition** from rule **execution**. The `.use()` method is a clean entry point for plugins to access the manager's `addType` and `addValidator` methods, thereby registering themselves.
-
-### Pillar 2: `src/Schema.js` - The Execution Engine
-
-* **Core Responsibility:** This is the heart of the library. It takes a schema structure and a set of registries (provided by the `SchemaManager`) and performs the actual validation against an input object.
-* **How it Works:** Its main public method, `validate()`, orchestrates the entire process. An instance of `Schema` is self-contained; it holds its own structure and a *snapshot* of the types and validators that were available at the moment of its creation.
-* **Key Design Decision - Self-Contained Instances:** Because the `Schema` constructor copies the handler registries, schemas created *before* a plugin is registered will not have access to the new rules. This is intentional and ensures that schema behavior is predictable and not affected by global state changes made after their creation.
-
-### Pillar 3: `src/CorePlugin.js` - The Default Toolset
-
-* **Core Responsibility:** To provide all the out-of-the-box types and validators that make the library useful from the start.
-* **How it Works:** It is a single object with an `install` method. This method is called by the `SchemaManager`'s `.use()` method. Its only job is to call `manager.addType()` and `manager.addValidator()` for every built-in rule.
-* **Key Design Decision - "Eating Your Own Dog Food":** By treating the core rules as just another plugin, we prove the validity and power of the plugin architecture. This file also serves as the canonical example for developers on how to create their own custom plugins.
+* **Centralized, yet Implicit, Management of Registries:** Type casting functions and validation rules are managed globally within the library's entry point, but without the need for an explicit "Manager" class instance to retrieve them.
+* **Clear Separation of Concerns:** The responsibility for *defining* types/validators is separate from the responsibility for *applying* them during validation.
+* **Plugin-Based Extensibility:** New types and validators can be seamlessly added through a straightforward plugin system.
+* **Direct API Access:** Key functions for interacting with the library are exposed directly, minimizing layers of abstraction.
 
 ---
 
-## 3. Codebase Tour & Control Flow
+## 2. The Architecture - A Deep Dive
 
-To truly understand the system, you must trace the flow of control from the public API down to the individual rule handlers.
+Let's walk through the main components and how they interact:
 
-### Step 1: `src/index.js` (The Public Facade)
+### 2.1. `./src/index.js` - The Brains of the Operation
 
-This is the public-facing entry point. It employs the **Facade pattern** to provide a simple, clean API that hides the underlying complexity of the `SchemaManager`.
+This file is the true heart and soul of the library. It acts as the central coordinator, managing the global collection of type and validator handlers, and providing the primary interface for users.
 
-* A **single, global `SchemaManager` instance** (`mainManager`) is created. This is a pragmatic choice for simplicity. For the vast majority of applications, one central registry of rules is all that is needed.
-* The exported `createSchema` function is a factory that calls `mainManager.create(structure)`.
-* Crucially, methods like `.use()` are bound from the `mainManager` instance directly onto the `createSchema` function (`createSchema.use = mainManager.use.bind(mainManager)`). This allows for the clean API (`createSchema.use(...)`) without exposing the manager itself.
+**Key Features of `index.js`:**
 
-### Step 2: `src/Schema.js` (The Core Logic)
+* **Global Registries (`globalTypes` and `globalValidators`):**
+    * At the top level of the `index.js` module, we declare two plain JavaScript objects: `const globalTypes = {};` and `const globalValidators = {};`.
+    * **Crucially, these objects are *not* directly exported.** This design choice makes them effectively "private" to the `index.js` module's scope. They serve as the single, authoritative source for all registered type casting functions and validation logic across the entire application's lifetime when this library is imported.
+    * Think of them as the library's internal knowledge base for how to process different data types and apply various rules.
 
-This is the most important file. Spend the most time here.
+* **Registration Functions (`addType` and `addValidator`):**
+    * To allow external code (including plugins) to add to our `globalTypes` and `globalValidators` registries, `index.js` exports two dedicated functions: `export function addType(...)` and `export function addValidator(...)`.
+    * These functions are straightforward: they take a `name` (e.g., `'string'`, `'min'`) and a `handler` function, perform a basic type check on the handler, and then assign it to the respective `globalTypes` or `globalValidators` object using the given `name` as the key.
+    * This provides a controlled and consistent API for extending the library's capabilities.
 
-#### The `validate()` Method
+* **The Plugin System (`use` function):**
+    * The `export function use(plugin)` function is our gateway for extensibility. It expects a `plugin` object that *must* have an `install` method.
+    * When `use(plugin)` is called, it executes `plugin.install()`.
+    * The `use` function passes a simple API object to the plugin's `install` method: `{ addType, addValidator }`. This means the plugin only receives the specific functions it needs to register its handlers, without having to know or interact with any other internal structures. It's clean, minimal, and promotes loose coupling.
 
-This is the public-facing method that kicks everything off. Let's walk through its execution order:
+* **The Schema Factory (`createSchema`):**
+    * The `const createSchema = (structure) => new Schema(structure, globalTypes, globalValidators);` function is the primary way users will interact with the library to define a new schema.
+    * When you call `createSchema({ /* your schema definition */ })`, it doesn't return some intermediary manager. Instead, it directly instantiates a new `Schema` object (from `./src/Schema.js`).
+    * **Crucially, it passes the *current references* to our `globalTypes` and `globalValidators` objects to the new `Schema` instance's constructor.** This means every `Schema` object created will automatically be "aware" of all the types and validators that have been registered globally up to that point.
 
-1.  **Initialization:** An empty `errors` object map and a `validatedObject` (a shallow copy of the input) are created.
-2.  **Spurious Field Check:** It first loops over the keys in the *input object* and checks if they exist in the schema's structure. This is a fast way to reject requests with unexpected fields.
-3.  **Promise Aggregation:** It then determines the list of fields to validate and creates an array of promises by calling `_validateField()` for each one.
-4.  **Concurrent Execution:** It executes all these validation promises in parallel using `Promise.all()`. This is a major performance feature.
-5.  **Error Collection:** After all promises resolve, it loops through the results. If any of them are error objects, they are added to the `errors` map, keyed by the field name for efficient lookup.
-6.  **Default Value Application:** This is the final, critical step. It checks if the `errors` map is empty. **If and only if the object is completely valid**, it loops through the schema structure one last time to apply any default values for fields that were missing from the original input. This prevents a partially-valid object from being hydrated with default data.
+* **The Public API (`createSchema.addType`, `createSchema.addValidator`, `createSchema.use`):**
+    * For user convenience and to maintain a familiar API shape (if you've seen similar libraries), we attach the globally exported `addType`, `addValidator`, and `use` functions as properties directly onto the `createSchema` function itself:
+        ```javascript
+        createSchema.addType = addType;
+        createSchema.addValidator = addValidator;
+        createSchema.use = use;
+        ```
+    * This allows consumers of the library to import just one thing (`import createSchema from 'json-rest-api-schema';`) and then access all core functionalities through it: `createSchema(...)`, `createSchema.addType(...)`, `createSchema.use(...)`.
 
-#### The `_validateField()` Method
+* **Automatic Core Plugin Installation:**
+    * Right before the final export, `index.js` explicitly calls `createSchema.use(CorePlugin);`.
+    * This ensures that as soon as your application imports `json-rest-api-schema`, all the built-in types (like `string`, `number`, `boolean`) and validators (like `min`, `max`, `required`) are automatically registered and ready for use. No extra setup step is required for basic functionality.
 
-This private method is the heart of the execution pipeline for a *single* field. Its order of operations is critical:
+### 2.2. `./src/Schema.js` - The Validation Workhorse
 
-```
-  Input Value
-      |
-      V
-+-----------------------------------------------------------+
-| 1. Pre-validation Checks                                  |
-|    - undefined? (required?) --> EXIT / ERROR              |
-|    - null? (canBeNull?)   --> EXIT / ERROR                |
-|    - empty string? (emptyAsNull?) --> SET to null, EXIT   |
-+-----------------------------------------------------------+
-      |
-      V (Value may have changed to null)
-+---------------------------------------------+
-| 2. Type Casting                             |
-|    - Look up type handler (e.g., 'number')  |
-|    - Execute handler. Value is now cast.    |
-+---------------------------------------------+
-      |
-      V (Value is now the correct type)
-+------------------------------------------------------------------+
-| 3. Parameter Validators                                          |
-|    - Loop through all other keys in definition (min, max, etc.)  |
-|    - Execute each validator handler in sequence.                 |
-|    - Handlers can either throw an error or transform the value.  |
-+------------------------------------------------------------------+
-      |
-      V
-  Final Validated Value
-```
+While `index.js` manages the global registries, the `Schema` class is where the actual validation magic happens for a *specific* schema definition.
 
-### Step 3: `src/CorePlugin.js` (The Rule Implementations)
+**Key Features of `Schema.js`:**
 
-Read this file last. Now that you understand the engine, you can see how the tools are built.
+* **Self-Contained Validation Logic:** Each instance of `Schema` represents a single, defined data structure. It contains the logic to traverse an input object, apply type casting, and run validation rules against its own `structure`.
+* **Dependency Injection in Constructor:** Unlike the previous design, the `Schema` constructor (`constructor(structure, types, validators)`) now explicitly receives the `types` and `validators` registries it needs from the `createSchema` factory function. This makes its dependencies clear and improves its testability.
+* **`_validateField` Method:** This private method is the granular core of the validation. For each field in your schema, it orchestrates:
+    1.  **Pre-checks:** Handling `required` rules, skipping fields, and dealing with `null` or empty values based on options.
+    2.  **Type Casting:** It looks up the appropriate type handler from its received `this.types` registry and attempts to transform the field's value.
+    3.  **Parameter Validation:** It then iterates through any validation parameters defined for the field (e.g., `min`, `max`, `validator`), looks up their respective handlers in `this.validators`, and applies them.
+* **`validate` Method:** This public asynchronous method orchestrates the validation of an entire object. It identifies allowed/disallowed fields, concurrently validates all fields using `_validateField`, collects all errors, and finally applies any `default` values to missing fields if the overall validation is successful.
 
-* **Type Handlers (`addType`)**: Their contract is to receive the `context` and **return** the correctly-typed value. If casting is impossible, they must `throw context.schema._typeError(...)`. Notice the `string` handler is defensive and only tries to convert primitives, while the `number` handler gracefully handles empty strings.
-* **Validator Handlers (`addValidator`)**: Their contract is to receive the `context` and do one of two things:
-    1.  **Transform:** If the rule is a transformer (e.g., `lowercase`), it returns the modified value.
-    2.  **Validate:** If the rule is a check (e.g., `min`), it does nothing on success, or `throw context.schema._paramError(...)` on failure.
+### 2.3. `./src/CorePlugin.js` - The Default Toolbox
+
+This file simply defines all the standard, built-in type and validator handlers that come with the library.
+
+**Key Features of `CorePlugin.js`:**
+
+* **The `install` Method:** This is the critical part. As discussed, its `install` method is designed to receive the `addType` and `addValidator` functions. It then calls these functions multiple times, registering all the core functionalities like `string`, `number`, `boolean` types, and `min`, `max`, `notEmpty` validators.
+* **Clear Definition of Default Handlers:** It provides well-defined functions for common data transformations and validation checks, serving as excellent examples for how to write your own custom types and validators.
 
 ---
-
-## 4. Advanced Patterns & "The Why"
-
-#### Why the `ValidationContext` Object?
-
-Instead of just passing `value` to each handler, we pass a rich `context` object. This is a core design decision that massively empowers developers writing custom rules.
-
-* `value`: The current value of the field. It may have been transformed by previous handlers.
-* `valueBeforeCast`: The original, untouched value from the input object. Crucial for validators like `notEmpty`.
-* `object`: The *entire* object being validated, including any transformations made to other fields so far. This allows for complex, cross-field validation.
-* `definition`: The schema definition for the current field (e.g., `{ type: 'string', min: 5 }`).
-* `schema`: The `Schema` instance itself, providing access to helper methods like `_paramError`.
-
-#### Asynchronous Validation In Practice
-
-The `async` nature of the library is not just academic. It allows for powerful custom validators.
-
-**Example: Check if a username is unique by simulating a database call.**
-
-```javascript
-// In a custom plugin or initial setup
-createSchema.addValidator('isUnique', async (context) => {
-  // In a real app, this would be a database query
-  const fakeDbCall = (username) => {
-    const existingUsers = ['admin', 'testuser'];
-    return new Promise(resolve => {
-      setTimeout(() => resolve(existingUsers.includes(username)), 100);
-    });
-  };
-
-  const isTaken = await fakeDbCall(context.value);
-
-  if (isTaken) {
-    throw context.schema._paramError(
-      context.fieldName,
-      'NOT_UNIQUE',
-      `The username '${context.value}' is already taken.`
-    );
-  }
-});
-
-// Usage in a schema
-const userSchema = createSchema({
-  username: { type: 'string', required: true, isUnique: true }
-});
-```
-
-The core engine handles the `await` and promise resolution automatically.
-
----
-
-## 5. How to Contribute
-
-* **Code Style:** Follow the existing conventions. Use Prettier/ESLint if configured. Method names are camelCase.
-* **Private Methods:** Internal helper methods on the `Schema` class are prefixed with an underscore (e.g., `_validateField`). Do not call these from outside the class.
-* **JSDoc:** All new methods and complex logic should be documented with JSDoc to maintain clarity and enable static analysis.
-* **Adding a Rule:** To add a new core rule, open `src/CorePlugin.js` and add your `addType` or `addValidator` call. Ensure you consider all edge cases (null, undefined, wrong types).
-* **Adding a Feature:** If you need to add a feature to the core engine in `Schema.js`, open an issue or pull request to discuss the architectural implications first. The core should remain as stable as possible.

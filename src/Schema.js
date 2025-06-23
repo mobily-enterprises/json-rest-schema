@@ -28,17 +28,18 @@
 
 /**
  * Represents an instance of a schema that can validate objects against a structure.
- * This class is instantiated by the SchemaManager.
+ * This class is instantiated by the createSchema factory function.
  */
 export class Schema {
   /**
    * @param {object} structure The schema definition.
-   * @param {{types: object, validators: object}} registries The type and validator handlers.
+   * @param {object} types The globally registered type handlers.
+   * @param {object} validators The globally registered validator handlers.
    */
-  constructor(structure, registries) {
+  constructor(structure, types, validators) {
     this.structure = structure;
-    this.types = registries.types;
-    this.validators = registries.validators;
+    this.types = types; // Now passed in directly
+    this.validators = validators; // Now passed in directly
   }
 
   // --- Private Helpers ---
@@ -182,9 +183,9 @@ export class Schema {
 
     // Step 3: Concurrently validate all fields.
     for (const fieldName of targetFields) {
-        validationPromises.push(
-            this._validateField(fieldName, object, validatedObject, options)
-        );
+      validationPromises.push(
+        this._validateField(fieldName, object, validatedObject, options)
+      );
     }
     
     // Step 4: Collect results from all validation pipelines.
@@ -198,12 +199,12 @@ export class Schema {
     // Step 5: Post-process for defaults on fields that were not present in the input.
     // This happens ONLY if the object is otherwise valid, preventing hydration of partial data.
     if (Object.keys(errors).length === 0 && !options.onlyObjectValues) {
-        for(const fieldName in this.structure) {
-            if(validatedObject[fieldName] === undefined && this.structure[fieldName].default !== undefined) {
-                const def = this.structure[fieldName].default;
-                validatedObject[fieldName] = typeof def === 'function' ? def() : def;
-            }
+      for(const fieldName in this.structure) {
+        if(validatedObject[fieldName] === undefined && this.structure[fieldName].default !== undefined) {
+          const def = this.structure[fieldName].default;
+          validatedObject[fieldName] = typeof def === 'function' ? def() : def;
         }
+      }
     }
     
     return { validatedObject, errors };

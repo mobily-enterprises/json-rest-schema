@@ -1,15 +1,52 @@
 {
   "name": "json-rest-api-schema",
   "version": "1.0.0",
-  "main": "index.js",
-  "type": "module",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+  "description": "A flexible and extensible schema validation library for JavaScript objects, designed for REST APIs and beyond. Features include type casting, data transformation, and a pluggable architecture for custom rules.",
+  "keywords": [
+    "schema",
+    "validation",
+    "json",
+    "rest-api",
+    "data-validation",
+    "type-casting",
+    "data-transformation",
+    "plugin",
+    "javascript"
+  ],
+  "author": "Tony Mobily",
+  "license": "GPL-3.0-only",
+  "homepage": "https://mobily-enterprises/json-rest-api-schema#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://mobily-enterprises/json-rest-api-schema.git"
   },
-  "author": "",
-  "license": "ISC",
-  "description": "",
+  "bugs": {
+    "url": "https://mobily-enterprises/json-rest-api-schema/issues"
+  },
+  "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "files": [
+    "src/",
+    "README.md",
+    "ONBOARDING.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --experimental-modules --no-warnings example.js",
+    "start": "node --experimental-modules --no-warnings example.js",
+    "lint": "eslint src/",
+    "lint:fix": "eslint src/ --fix"
+  },
   "dependencies": {
     "flatted": "^3.3.3"
+  },
+  "devDependencies": {
+    "eslint": "^8.57.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }

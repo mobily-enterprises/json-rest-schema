@@ -1,6 +1,6 @@
 {
-  "name": "json-rest-api-schema",
-  "version": "1.0.0",
+  "name": "jsonrestapi-schema",
+  "version": "1.0.1",
   "description": "A flexible and extensible schema validation library for JavaScript objects, designed for REST APIs and beyond. Features include type casting, data transformation, and a pluggable architecture for custom rules.",
   "keywords": [
     "schema",
@@ -15,13 +15,13 @@
   ],
   "author": "Tony Mobily",
   "license": "GPL-3.0-only",
-  "homepage": "https://mobily-enterprises/json-rest-api-schema#readme",
+  "homepage": "https://mobily-enterprises/jsonrestapi-schema#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://mobily-enterprises/json-rest-api-schema.git"
+    "url": "git+https://mobily-enterprises/jsonrestapi-schema.git"
   },
   "bugs": {
-    "url": "https://mobily-enterprises/json-rest-api-schema/issues"
+    "url": "https://mobily-enterprises/jsonrestapi-schema/issues"
   },
   "type": "module",
   "main": "src/index.js",

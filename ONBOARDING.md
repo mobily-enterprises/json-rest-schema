@@ -1,6 +1,6 @@
-# ONBOARDING.md - Understanding the `json-rest-api-schema` Library Architecture
+# ONBOARDING.md - Understanding the `jsonrestapi-schema` Library Architecture
 
-Welcome to the `json-rest-api-schema` project! This document aims to demystify the library's internal structure and design philosophy. If you're looking to contribute, extend its functionality, or simply understand how it works under the hood, you're in the right place.
+Welcome to the `jsonrestapi-schema` project! This document aims to demystify the library's internal structure and design philosophy. If you're looking to contribute, extend its functionality, or simply understand how it works under the hood, you're in the right place.
 
 ---
 
@@ -52,11 +52,11 @@ This file is the true heart and soul of the library. It acts as the central coor
         createSchema.addValidator = addValidator;
         createSchema.use = use;
         ```
-    * This allows consumers of the library to import just one thing (`import createSchema from 'json-rest-api-schema';`) and then access all core functionalities through it: `createSchema(...)`, `createSchema.addType(...)`, `createSchema.use(...)`.
+    * This allows consumers of the library to import just one thing (`import createSchema from 'jsonrestapi-schema';`) and then access all core functionalities through it: `createSchema(...)`, `createSchema.addType(...)`, `createSchema.use(...)`.
 
 * **Automatic Core Plugin Installation:**
     * Right before the final export, `index.js` explicitly calls `createSchema.use(CorePlugin);`.
-    * This ensures that as soon as your application imports `json-rest-api-schema`, all the built-in types (like `string`, `number`, `boolean`) and validators (like `min`, `max`, `required`) are automatically registered and ready for use. No extra setup step is required for basic functionality.
+    * This ensures that as soon as your application imports `jsonrestapi-schema`, all the built-in types (like `string`, `number`, `boolean`) and validators (like `min`, `max`, `required`) are automatically registered and ready for use. No extra setup step is required for basic functionality.
 
 ### 2.2. `./src/Schema.js` - The Validation Workhorse
 

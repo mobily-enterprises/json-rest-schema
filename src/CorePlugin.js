@@ -22,7 +22,24 @@ const CorePlugin = {
     // --- Type Handlers ---
 
     addType('none', context => context.value);
-    
+
+    addType('file', context => {
+      const val = context.value;
+      if (val === undefined || val === null) context.throwTypeError();
+
+      // Only attempt to convert primitives. Fail on complex objects/arrays.
+      // A file is expected to be just a file handle
+      const valType = typeof val;
+      if (valType === 'string' || valType === 'number' || valType === 'boolean') {
+          const s = val.toString();
+          return context.definition.noTrim ? s : s.trim();
+      }
+      
+      // If it's not a primitive that can be safely converted, it's a type error.
+      context.throwTypeError();
+    });
+
+
     addType('string', context => {
       const val = context.value;
       if (val === undefined || val === null) return '';

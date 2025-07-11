@@ -65,7 +65,7 @@ const CorePlugin = {
     addType('timestamp', context => {
       const r = Number(context.value);
       if (isNaN(r)) context.throwTypeError();
-      if (!r && context.computedOptions.canBeNull) return null;
+      if (!r && context.computedOptions.nullable) return null;
       return r;
     });
     addType('dateTime', context => {
@@ -87,9 +87,15 @@ const CorePlugin = {
     addType('object', context => context.value);
     addType('serialize', context => {
       try {
-        return flatted.stringify(context.value);
+        // First try regular JSON.stringify for non-circular objects
+        return JSON.stringify(context.value);
       } catch (e) {
-        context.throwTypeError();
+        // If that fails (likely circular reference), use flatted
+        try {
+          return flatted.stringify(context.value);
+        } catch (e2) {
+          context.throwTypeError();
+        }
       }
     });
     addType('boolean', context => {
@@ -110,22 +116,30 @@ const CorePlugin = {
     });
 
     // --- Validator Handlers ---
+    addValidator('minLength', context => {
+      if (context.value === undefined) return;
+      if (context.definition.type === 'string' && context.value.toString && context.value.toString().length < context.parameterValue) {
+        context.throwParamError('MIN_LENGTH', `Length must be at least ${context.parameterValue} characters.`, { min: context.parameterValue, actual: context.value.toString().length });
+      }
+    });
+    
     addValidator('min', context => {
       if (context.value === undefined) return;
       if (context.definition.type === 'number' && typeof context.value === 'number' && context.value < context.parameterValue) {
         context.throwParamError('MIN_VALUE', `Value must be at least ${context.parameterValue}.`, { min: context.parameterValue, actual: context.value });
       }
-      if (context.definition.type === 'string' && context.value.toString && context.value.toString().length < context.parameterValue) {
-        context.throwParamError('MIN_LENGTH', `Length must be at least ${context.parameterValue} characters.`, { min: context.parameterValue, actual: context.value.toString().length });
+    });
+    addValidator('maxLength', context => {
+      if (context.value === undefined) return;
+      if (context.definition.type === 'string' && context.value.toString && context.value.toString().length > context.parameterValue) {
+        context.throwParamError('MAX_LENGTH', `Length must be no more than ${context.parameterValue} characters.`, { max: context.parameterValue, actual: context.value.toString().length });
       }
     });
+    
     addValidator('max', context => {
       if (context.value === undefined) return;
       if (context.definition.type === 'number' && typeof context.value === 'number' && context.value > context.parameterValue) {
         context.throwParamError('MAX_VALUE', `Value must be no more than ${context.parameterValue}.`, { max: context.parameterValue, actual: context.value });
-      }
-      if (context.definition.type === 'string' && context.value.toString && context.value.toString().length > context.parameterValue) {
-        context.throwParamError('MAX_LENGTH', `Length must be no more than ${context.parameterValue} characters.`, { max: context.parameterValue, actual: context.value.toString().length });
       }
     });
     addValidator('validator', async context => {
@@ -157,7 +171,15 @@ const CorePlugin = {
             context.throwParamError('NOT_EMPTY', 'Field cannot be empty.');
         }
     });
-    addValidator('required', () => {}); // Stays as a no-op, logic is handled in _validateField  
+    addValidator('required', () => {}); // Stays as a no-op, logic is handled in _validateField
+    
+    // Add new validators for database alignment
+    addValidator('unsigned', () => {}); // No-op, used for schema metadata
+    addValidator('precision', () => {}); // No-op, used for schema metadata
+    addValidator('scale', () => {}); // No-op, used for schema metadata
+    addValidator('nullable', () => {}); // No-op, handled in Schema.js
+    addValidator('nullOnEmpty', () => {}); // No-op, handled in Schema.js
+    addValidator('defaultTo', () => {}); // No-op, handled in Schema.js  
   }
 };
 

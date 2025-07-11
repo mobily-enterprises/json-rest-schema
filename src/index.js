@@ -72,5 +72,6 @@ createSchema.use = use;
 // Automatically install the core plugin to provide out-of-the-box functionality.
 createSchema.use(CorePlugin);
 
-// Export the factory function as the main module export.
-export default createSchema;
+// Export all functions as named exports
+export { createSchema };
+export { createKnexTable, generateKnexMigration } from './createKnexTable.js';

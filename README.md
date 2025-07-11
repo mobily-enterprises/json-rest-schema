@@ -13,9 +13,9 @@ import createSchema from './src/index.js';
 
 // Define the structure and rules for our user data
 const userSchema = createSchema({
-  username: { type: 'string', required: true, min: 3 },
+  username: { type: 'string', required: true, minLength: 3 },
   email: { type: 'string', required: true },
-  age: { type: 'number', min: 18, default: 18 }
+  age: { type: 'number', min: 18, defaultTo: 18 }
 });
 ```
 
@@ -74,7 +74,7 @@ Let's look at an example with invalid data:
 
 ```javascript
 const invalidInput = {
-  username: 'Al', // Fails 'min: 3'
+  username: 'Al', // Fails 'minLength: 3'
   // email is missing, fails 'required: true'
   age: 16 // Fails 'min: 18'
 };
@@ -145,16 +145,24 @@ Validators are rules that run after a value has been cast to its proper type.
 | Parameter | Description |
 |---|---|
 | `required: true` | The field must be present in the input object. Fails if the key is `undefined`. |
-| `min: <number>` | For `string` types, validates the minimum character length. For `number` types, validates the minimum value. |
-| `max: <number>` | For `string` types, validates the maximum character length. For `number` types, validates the maximum value. |
+| `minLength: <number>` | For `string` types, validates the minimum character length. |
+| `maxLength: <number>` | For `string` types, validates the maximum character length. |
+| `min: <number>` | For `number` types, validates the minimum value. |
+| `max: <number>` | For `number` types, validates the maximum value. |
 | `notEmpty: true` | The field cannot be an empty string (`''`). This is different from `required`, as an empty string is still a defined value. |
 | `length: <number>`| For `string` types, it **truncates** the string to the specified length. For `number` types, it throws an error if the number of digits in the original input exceeds the specified length. |
-| `canBeNull: true`| Allows the value for this field to be `null`. By default, `null` is not allowed. |
-| `emptyAsNull: true`| If the input value is an empty string (`''`), it will be cast to `null` before other validators run. |
+| `nullable: true`| Allows the value for this field to be `null`. By default, `null` is not allowed. |
+| `nullOnEmpty: true`| If the input value is an empty string (`''`), it will be cast to `null` before other validators run. |
 | `lowercase: true` | **Transforms** the string to all lowercase. |
 | `uppercase: true` | **Transforms** the string to all uppercase. |
 | `validator: <function>`| Allows you to provide your own custom validation function for complex, one-off logic. |
-| `default: <value>` | If the field is not present in the input object and the entire object is valid, this value will be used. Can be a value or a function that returns a value. |
+| `defaultTo: <value>` | If the field is not present in the input object and the entire object is valid, this value will be used. Can be a value or a function that returns a value. |
+| `unsigned: true` | For `number` and `id` types, indicates the value should be non-negative (database hint). |
+| `precision: <number>` | For `number` types, total number of digits (database hint for decimal types). |
+| `scale: <number>` | For `number` types, number of decimal places (database hint for decimal types). |
+| `unique: true` | Field value must be unique (database constraint). |
+| `primary: true` | Field is a primary key (database constraint). |
+| `references: <object>` | Foreign key reference with `table`, `column`, `onDelete`, `onUpdate` properties. |
 
 ---
 
@@ -277,3 +285,214 @@ const mySchema = createSchema({
 ```
 
 This makes your custom rules portable and keeps your main application setup clean.
+
+---
+
+## 6. Database Integration with Knex
+
+The library now includes built-in support for generating Knex database tables from your schemas. This ensures your validation rules and database structure stay perfectly in sync.
+
+**Note:** To use these features, you need to install Knex in your project:
+
+```bash
+npm install knex
+
+# Also install a database driver:
+npm install pg       # for PostgreSQL
+npm install mysql2   # for MySQL  
+npm install sqlite3  # for SQLite
+```
+
+### Importing the Functions
+
+```javascript
+import createSchema, { createKnexTable, generateKnexMigration } from 'json-rest-schema';
+```
+
+### Creating Tables Directly
+
+Use `createKnexTable` to create a table directly in your database:
+
+```javascript
+import knex from 'knex';
+import createSchema, { createKnexTable } from 'json-rest-schema';
+
+// Configure your database
+const db = knex({
+  client: 'postgresql', // or 'mysql', 'sqlite3', etc.
+  connection: {
+    host: '127.0.0.1',
+    user: 'your_username',
+    password: 'your_password',
+    database: 'your_database'
+  }
+});
+
+// Define your schema
+const userSchema = createSchema({
+  email: { type: 'string', required: true, maxLength: 255, unique: true },
+  username: { type: 'string', required: true, maxLength: 50, minLength: 3 },
+  age: { type: 'number', nullable: true, min: 0, max: 150 },
+  isActive: { type: 'boolean', defaultTo: true },
+  metadata: { type: 'object', nullable: true }
+});
+
+// Create the table
+await createKnexTable(db, 'users', userSchema, { 
+  timestamps: true  // Adds created_at and updated_at columns
+});
+
+// Don't forget to close the connection
+await db.destroy();
+```
+
+### Generating Migration Files
+
+For production applications, you'll want to use migrations. Use `generateKnexMigration` to create migration files:
+
+```javascript
+import { writeFileSync } from 'fs';
+import createSchema, { generateKnexMigration } from 'json-rest-schema';
+
+const userSchema = createSchema({
+  email: { type: 'string', required: true, maxLength: 255, unique: true },
+  username: { type: 'string', required: true, maxLength: 50 },
+  role: { type: 'string', defaultTo: 'user', maxLength: 20 },
+  lastLogin: { type: 'dateTime', nullable: true }
+});
+
+// Generate migration code
+const migrationCode = generateKnexMigration('users', userSchema, { 
+  timestamps: true 
+});
+
+// Save to a file with timestamp
+const timestamp = new Date().toISOString()
+  .replace(/[-:T]/g, '')
+  .substr(0, 14);
+const filename = `migrations/${timestamp}_create_users_table.js`;
+
+writeFileSync(filename, migrationCode);
+console.log(`Created migration: ${filename}`);
+```
+
+The generated migration will look like:
+
+```javascript
+exports.up = function(knex) {
+  return knex.schema.createTable('users', (table) => {
+    table.increments('id').primary();
+    table.string('email', 255).notNullable().unique();
+    table.string('username', 50).notNullable();
+    table.string('role', 20).defaultTo('user');
+    table.datetime('lastLogin').nullable();
+    table.timestamps(true, true);
+  });
+};
+
+exports.down = function(knex) {
+  return knex.schema.dropTable('users');
+};
+```
+
+### Type Mappings
+
+The library automatically maps json-rest-schema types to appropriate Knex column types:
+
+| Schema Type | Knex Column Type | Notes |
+|---|---|---|
+| `string` | `string()` | Uses `maxLength` if specified |
+| `number` | `float()` or `decimal()` | Uses `decimal` if `precision` and `scale` are specified |
+| `id` | `integer()` | Adds `.unsigned()` by default |
+| `boolean` | `boolean()` | |
+| `date` | `date()` | |
+| `dateTime` | `datetime()` | |
+| `timestamp` | `integer()` | For Unix timestamps |
+| `array` | `json()` | |
+| `object` | `json()` | |
+| `serialize` | `json()` | |
+| `blob`/`file` | `binary()` | |
+
+### Advanced Features
+
+#### Foreign Key Relationships
+
+```javascript
+const postSchema = createSchema({
+  title: { type: 'string', required: true, maxLength: 200 },
+  authorId: { 
+    type: 'id', 
+    required: true,
+    references: { 
+      table: 'users', 
+      onDelete: 'CASCADE',
+      onUpdate: 'RESTRICT'
+    }
+  }
+});
+```
+
+#### Decimal Precision
+
+```javascript
+const productSchema = createSchema({
+  price: { 
+    type: 'number', 
+    required: true,
+    precision: 10,  // Total digits
+    scale: 2,       // Decimal places
+    min: 0
+  }
+});
+```
+
+#### Custom Table Options
+
+```javascript
+await createKnexTable(db, 'products', productSchema, {
+  autoIncrement: false,  // Don't add auto-incrementing ID
+  timestamps: true       // Add created_at/updated_at
+});
+```
+
+### Complete Example
+
+Here's a complete example showing how validation and database schema work together:
+
+```javascript
+import knex from 'knex';
+import createSchema, { createKnexTable } from 'json-rest-schema';
+
+// 1. Define your schema once
+const userSchema = createSchema({
+  email: { type: 'string', required: true, maxLength: 255, unique: true },
+  age: { type: 'number', nullable: true, min: 18, max: 100 },
+  isActive: { type: 'boolean', defaultTo: true }
+});
+
+// 2. Create the database table
+const db = knex({ /* your config */ });
+await createKnexTable(db, 'users', userSchema);
+
+// 3. Use the same schema for validation
+const userInput = {
+  email: 'user@example.com',
+  age: '25',  // Will be cast to number
+  isActive: 'true'  // Will be cast to boolean
+};
+
+const { validatedObject, errors } = await userSchema.validate(userInput);
+
+if (Object.keys(errors).length === 0) {
+  // 4. Save the validated data
+  await db('users').insert(validatedObject);
+  console.log('User saved successfully!');
+}
+
+await db.destroy();
+```
+
+This approach ensures that:
+- Your validation rules match your database constraints
+- Type casting happens consistently
+- You maintain a single source of truth for your data structure

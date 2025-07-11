@@ -9,7 +9,7 @@
 
 import { test, describe, it, before } from 'node:test';
 import assert from 'node:assert';
-import createSchema from './src/index.js';
+import { createSchema } from './src/index.js';
 import { Schema } from './src/Schema.js';
 import * as flatted from 'flatted';
 
@@ -99,32 +99,32 @@ describe('2. Core Validation Logic (`Schema.js`)', () => {
     assertError(errors, 'name', 'NOT_NULLABLE');
   });
 
-  it('should allow null if `canBeNull` is true', async () => {
-    const schema = createSchema({ name: { type: 'string', canBeNull: true } });
+  it('should allow null if `nullable` is true', async () => {
+    const schema = createSchema({ name: { type: 'string', nullable: true } });
     const { errors, validatedObject } = await schema.validate({ name: null });
     assert.strictEqual(Object.keys(errors).length, 0);
     assert.strictEqual(validatedObject.name, null);
   });
 
-  it('should cast empty string to null if `emptyAsNull` is true', async () => {
-    const schema = createSchema({ name: { type: 'string', emptyAsNull: true } });
+  it('should cast empty string to null if `nullOnEmpty` is true', async () => {
+    const schema = createSchema({ name: { type: 'string', nullOnEmpty: true } });
     const { errors, validatedObject } = await schema.validate({ name: '' });
     assert.strictEqual(Object.keys(errors).length, 0);
     assert.strictEqual(validatedObject.name, null);
   });
 
-  it('should only apply default values when the object is otherwise valid', async () => {
+  it('should only apply defaultTo values when the object is otherwise valid', async () => {
     const schema = createSchema({
       name: { type: 'string', required: true },
-      role: { type: 'string', default: 'user' },
+      role: { type: 'string', defaultTo: 'user' },
     });
     
-    // Case 1: Invalid object, defaults should NOT be applied.
+    // Case 1: Invalid object, defaultTo should NOT be applied.
     const { validatedObject: invalidObj, errors } = await schema.validate({});
     assert.strictEqual(Object.keys(errors).length, 1);
-    assert.strictEqual(invalidObj.role, undefined, "Default should not be applied to invalid object");
+    assert.strictEqual(invalidObj.role, undefined, "defaultTo should not be applied to invalid object");
 
-    // Case 2: Valid object, defaults SHOULD be applied.
+    // Case 2: Valid object, defaultTo SHOULD be applied.
     const { validatedObject: validObj, errors: validErrors } = await schema.validate({ name: 'test' });
     assert.strictEqual(Object.keys(validErrors).length, 0);
     assert.strictEqual(validObj.role, 'user');
@@ -132,8 +132,8 @@ describe('2. Core Validation Logic (`Schema.js`)', () => {
 
   describe('Validation Options', () => {
     const schema = createSchema({
-        name: { type: 'string', required: true, min: 3 },
-        role: { type: 'string', default: 'guest' }
+        name: { type: 'string', required: true, minLength: 3 },
+        role: { type: 'string', defaultTo: 'guest' }
     });
 
     it('`onlyObjectValues`: should only validate fields present in the input object', async () => {
@@ -148,8 +148,8 @@ describe('2. Core Validation Logic (`Schema.js`)', () => {
     });
 
     it('`skipParams`: should skip specific validators on a field', async () => {
-      // name: 'a' would fail `min: 3`, but we skip it
-      const { errors } = await schema.validate({ name: 'a' }, { skipParams: { name: ['min'] } });
+      // name: 'a' would fail `minLength: 3`, but we skip it
+      const { errors } = await schema.validate({ name: 'a' }, { skipParams: { name: ['minLength'] } });
       assert.strictEqual(Object.keys(errors).length, 0);
     });
   });
@@ -189,7 +189,7 @@ describe('3. Core Plugin: Type Handlers', () => {
     
     // Timestamp
     { type: 'timestamp', input: { field: 1672531200000 }, expected: 1672531200000 },
-    { type: 'timestamp', input: { field: '0' }, options: { canBeNull: true }, expected: null },
+    { type: 'timestamp', input: { field: '0' }, options: { nullable: true }, expected: null },
     { type: 'timestamp', input: { field: 'abc' }, error: 'TYPE_CAST_FAILED' },
 
     // DateTime & Date
@@ -259,10 +259,10 @@ describe('3. Core Plugin: Type Handlers', () => {
 
 describe('4. Core Plugin: Validator Handlers', () => {
 
-  it('`min`/`max` validators should work for numbers and strings', async () => {
+  it('`min`/`max` validators should work for numbers, `minLength`/`maxLength` for strings', async () => {
     const schema = createSchema({
       num: { type: 'number', min: 10, max: 20 },
-      str: { type: 'string', min: 3, max: 5 },
+      str: { type: 'string', minLength: 3, maxLength: 5 },
     });
 
     const { errors: err1 } = await schema.validate({ num: 9, str: 'hi' });

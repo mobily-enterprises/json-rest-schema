@@ -1,6 +1,6 @@
 {
   "name": "json-rest-schema",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "A flexible and extensible schema validation library for JavaScript objects, designed for REST APIs and beyond. Features include type casting, data transformation, and a pluggable architecture for custom rules.",
   "keywords": [
     "schema",
@@ -35,8 +35,10 @@
     "LICENSE"
   ],
   "scripts": {
-    "test": "node --experimental-modules --no-warnings example.js",
-    "start": "node --experimental-modules --no-warnings example.js",
+    "test": "node --test tests.js test-knex-table-real.js",
+    "example": "node example.js",
+    "example:knex": "node knex-table-example.js",
+    "start": "node example.js",
     "lint": "eslint src/",
     "lint:fix": "eslint src/ --fix"
   },
@@ -44,9 +46,19 @@
     "flatted": "^3.3.3"
   },
   "devDependencies": {
-    "eslint": "^8.57.0"
+    "eslint": "^8.57.0",
+    "knex": "^3.1.0",
+    "sqlite3": "^5.1.7"
   },
   "engines": {
     "node": ">=18.0.0"
+  },
+  "peerDependencies": {
+    "knex": ">=2.0.0"
+  },
+  "peerDependenciesMeta": {
+    "knex": {
+      "optional": true
+    }
   }
 }

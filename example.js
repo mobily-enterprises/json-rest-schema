@@ -8,36 +8,36 @@
  * 3. Run `node examples.js` in your terminal.
  */
 
-import createSchema from './src/index.js';
+import { createSchema } from './src/index.js';
 import * as flatted from 'flatted';
 
 // --- A schema that uses every built-in type and validator ---
 const comprehensiveSchema = createSchema({
   // 'string' with various validators
-  username: { type: 'string', required: true, min: 3, max: 20, lowercase: true },
-  fullName: { type: 'string', uppercase: true, default: 'N/A' },
+  username: { type: 'string', required: true, minLength: 3, maxLength: 20, lowercase: true },
+  fullName: { type: 'string', uppercase: true, defaultTo: 'N/A' },
   description: { type: 'string', length: 10 }, // 'length' truncates strings
 
   // 'number' with validators
   age: { type: 'number', required: true, min: 18, max: 100 },
-  score: { type: 'number', default: 0 },
+  score: { type: 'number', defaultTo: 0 },
   
   // 'id' type for numeric identifiers from strings
   userId: { type: 'id', required: true },
   
   // 'boolean' type demonstrating string casting
-  isActive: { type: 'boolean', default: false },
+  isActive: { type: 'boolean', defaultTo: false },
   hasAgreed: { type: 'boolean', required: true, validator: (val) => val === true ? undefined : 'You must agree to the terms.' },
 
   // 'date' and 'dateTime' types
   birthDate: { type: 'date', required: true },
-  lastLogin: { type: 'dateTime', canBeNull: true },
+  lastLogin: { type: 'dateTime', nullable: true },
 
   // 'array' type for handling lists
-  tags: { type: 'array', notEmpty: true, default: ['general'] },
+  tags: { type: 'array', notEmpty: true, defaultTo: ['general'] },
 
-  // Demonstrating 'notEmpty' vs 'emptyAsNull'
-  optionalComment: { type: 'string', emptyAsNull: true }, // An empty string becomes null
+  // Demonstrating 'notEmpty' vs 'nullOnEmpty'
+  optionalComment: { type: 'string', nullOnEmpty: true }, // An empty string becomes null
   requiredComment: { type: 'string', notEmpty: true }, // An empty string is an error
 
   // 'serialize' for complex/circular objects
@@ -54,14 +54,14 @@ const comprehensiveSchema = createSchema({
 
 // 1. Data designed to fail every possible validation rule
 const invalidInput = {
-  username: 'Bo', // Fails min length
-  // 'fullName' is missing to test its default value later (only on valid runs)
+  username: 'Bo', // Fails minLength
+  // 'fullName' is missing to test its defaultTo value later (only on valid runs)
   description: 'This description is much too long and will be cut short', // Will be truncated
   age: 17, // Fails min value
   userId: 'not-a-number', // Fails 'id' type casting
   hasAgreed: false, // Fails custom 'validator' function
   birthDate: 'invalid-date-format', // Fails 'date' type casting
-  lastLogin: null, // This is actually VALID because of 'canBeNull: true'
+  lastLogin: null, // This is actually VALID because of 'nullable: true'
   tags: [], // Fails 'notEmpty'
   optionalComment: '', // Will be cast to null, which is valid
   requiredComment: '', // Fails 'notEmpty'
@@ -69,7 +69,7 @@ const invalidInput = {
   extraField: 'This field is not in the schema' // Will be flagged as an error
 };
 
-// 2. Data designed to pass validation and showcase casting/defaults
+// 2. Data designed to pass validation and showcase casting/defaultTo
 const validInput = {
   username: '  VALID_USER   ', // Will be trimmed and lowercased
   description: 'A short note that is okay.', // Will not be truncated
@@ -114,7 +114,7 @@ async function runComprehensiveExample() {
   // --- Run 2: Valid Data ---
   console.log('\n\n--- 2. Testing Valid Data to Showcase Casting and Defaults ---');
   
-  // We run this without 'onlyObjectValues' to let defaults be applied
+  // We run this without 'onlyObjectValues' to let defaultTo be applied
   const { validatedObject: validResult, errors: validErrors } = await comprehensiveSchema.validate(validInput);
   
   console.log('Input:', validInput);
@@ -125,7 +125,7 @@ async function runComprehensiveExample() {
 
   console.log('\n--- Verifying Specific Transformations ---');
   console.log(`Username cast to lowercase:`, validResult.username);
-  console.log(`Full name applied default:`, validResult.fullName);
+  console.log(`Full name applied defaultTo:`, validResult.fullName);
   console.log(`Age cast to number:`, validResult.age);
   console.log(`'isActive' cast from "on" to boolean:`, validResult.isActive);
   console.log(`'tags' cast from string to array:`, validResult.tags);

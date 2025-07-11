@@ -20,7 +20,7 @@
  * @property {object} objectBeforeCast - The original, unmodified input object.
  * @property {any} valueBeforeCast - The original value of the field.
  * @property {object} options - The global validation options.
- * @property {{canBeNull: boolean, emptyAsNull: boolean}} computedOptions - Calculated options.
+ * @property {{nullable: boolean, nullOnEmpty: boolean}} computedOptions - Calculated options.
  * @property {string} [parameterName] - The name of the validator parameter being processed.
  * @property {any} [parameterValue] - The value of the validator parameter.
  * @property {function(): void} throwTypeError - Throws a standardized type casting error.
@@ -90,18 +90,18 @@ export class Schema {
 
     if (object[fieldName] === undefined) {
       // It's not required and it's not present, so we can stop processing this field.
-      // The 'default' value will be applied in the main `validate` loop's post-processing step.
+      // The 'defaultTo' value will be applied in the main `validate` loop's post-processing step.
       return null;
     }
     
-    const canBeNull = definition.canBeNull === true || options.canBeNull === true;
-    const emptyAsNull = definition.emptyAsNull === true || options.emptyAsNull === true;
+    const nullable = definition.nullable === true || options.nullable === true;
+    const nullOnEmpty = definition.nullOnEmpty === true || options.nullOnEmpty === true;
 
     if (object[fieldName] === null) {
-      return canBeNull ? null : { field: fieldName, code: 'NOT_NULLABLE', message: 'Field cannot be null', params: {} };
+      return nullable ? null : { field: fieldName, code: 'NOT_NULLABLE', message: 'Field cannot be null', params: {} };
     }
 
-    if (String(object[fieldName]) === '' && emptyAsNull) {
+    if (String(object[fieldName]) === '' && nullOnEmpty) {
       validatedObject[fieldName] = null;
       return null;
     }
@@ -116,7 +116,7 @@ export class Schema {
       objectBeforeCast: object,
       valueBeforeCast: object[fieldName],
       options,
-      computedOptions: { canBeNull: canBeNull || emptyAsNull, emptyAsNull },
+      computedOptions: { nullable: nullable || nullOnEmpty, nullOnEmpty },
 
       // NEW: Public API for throwing standardized errors from within plugins/handlers
       throwTypeError: () => {
@@ -206,12 +206,12 @@ export class Schema {
         }
     }
     
-    // Step 5: Post-process for defaults on fields that were not present in the input.
+    // Step 5: Post-process for defaultTo on fields that were not present in the input.
     // This happens ONLY if the object is otherwise valid, preventing hydration of partial data.
     if (Object.keys(errors).length === 0 && !options.onlyObjectValues) {
       for(const fieldName in this.structure) {
-        if(validatedObject[fieldName] === undefined && this.structure[fieldName].default !== undefined) {
-          const def = this.structure[fieldName].default;
+        if(validatedObject[fieldName] === undefined && this.structure[fieldName].defaultTo !== undefined) {
+          const def = this.structure[fieldName].defaultTo;
           validatedObject[fieldName] = typeof def === 'function' ? def() : def;
         }
       }

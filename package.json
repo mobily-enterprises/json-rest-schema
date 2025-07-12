@@ -1,6 +1,6 @@
 {
   "name": "json-rest-schema",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "A flexible and extensible schema validation library for JavaScript objects, designed for REST APIs and beyond. Features include type casting, data transformation, and a pluggable architecture for custom rules.",
   "keywords": [
     "schema",

@@ -35,6 +35,9 @@ function mapTypeToKnex(table, columnName, definition) {
     case 'dateTime':
       return table.datetime(columnName);
     
+    case 'time':
+      return table.time(columnName);
+    
     case 'timestamp':
       return table.integer(columnName);
     
@@ -200,6 +203,9 @@ export function generateKnexMigration(tableName, schema, options = {}) {
         break;
       case 'dateTime':
         line += `table.datetime('${fieldName}')`;
+        break;
+      case 'time':
+        line += `table.time('${fieldName}')`;
         break;
       case 'timestamp':
         line += `table.integer('${fieldName}')`;

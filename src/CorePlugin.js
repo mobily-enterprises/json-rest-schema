@@ -69,14 +69,96 @@ const CorePlugin = {
       return r;
     });
     addType('dateTime', context => {
-      if (!context.value || !Number(new Date(context.value))) return null;
+      if (!context.value || context.value === '') return null;
+      
+      // If already a Date object, return it
+      if (context.value instanceof Date) {
+        return isNaN(context.value.getTime()) ? null : context.value;
+      }
+      
+      // Handle string values
+      if (typeof context.value === 'string') {
+        // Detect MySQL datetime format: 'YYYY-MM-DD HH:MM:SS'
+        const isMySQLFormat = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/.test(context.value) &&
+                             !context.value.includes('T') && 
+                             !context.value.includes('Z');
+        
+        if (isMySQLFormat) {
+          // Convert to ISO format and force UTC interpretation
+          const d = new Date(context.value.replace(' ', 'T') + 'Z');
+          if (isNaN(d.getTime())) {
+            context.throwTypeError();
+          }
+          return d;
+        }
+      }
+      
+      // Try to parse the value normally
       const d = new Date(context.value);
-      if (isNaN(d)) context.throwTypeError();
-      return d.toISOString().slice(0, 19).replace('T', ' ');
+      if (isNaN(d.getTime())) {
+        context.throwTypeError();
+      }
+      
+      // Return the Date object directly - let Knex handle the database formatting
+      return d;
     });
     addType('date', context => {
-      const r = context.schema.types.dateTime(context); // Access through context.schema.types
-      return r && typeof r === 'string' ? r.slice(0, 10) : r;
+      if (!context.value || context.value === '') return null;
+      
+      // If already a Date object, return it
+      if (context.value instanceof Date) {
+        return isNaN(context.value.getTime()) ? null : context.value;
+      }
+      
+      // For date-only strings, ensure we parse at UTC midnight to avoid timezone issues
+      let dateStr = String(context.value);
+      
+      // If it's just a date (YYYY-MM-DD), add time at UTC midnight
+      if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+        dateStr += 'T00:00:00Z';
+      }
+      
+      const d = new Date(dateStr);
+      if (isNaN(d.getTime())) {
+        context.throwTypeError();
+      }
+      
+      // Return the Date object directly - let Knex handle the database formatting
+      return d;
+    });
+    addType('time', context => {
+      if (!context.value || context.value === '') return null;
+      
+      // Try to parse as time string (HH:MM:SS or HH:MM)
+      if (typeof context.value === 'string') {
+        // Match HH:MM:SS or HH:MM format
+        const timeMatch = context.value.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+        if (timeMatch) {
+          const hours = parseInt(timeMatch[1], 10);
+          const minutes = parseInt(timeMatch[2], 10);
+          const seconds = timeMatch[3] ? parseInt(timeMatch[3], 10) : 0;
+          
+          // Validate ranges
+          if (hours >= 0 && hours <= 23 && minutes >= 0 && minutes <= 59 && seconds >= 0 && seconds <= 59) {
+            // Return normalized HH:MM:SS format as string
+            // Note: We return string because most databases don't have a true time-only type
+            return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+          }
+        }
+      }
+      
+      // Try to extract time from a Date object or datetime string
+      try {
+        const d = new Date(context.value);
+        if (!isNaN(d.getTime())) {
+          // Extract time portion in HH:MM:SS format
+          return d.toISOString().slice(11, 19);
+        }
+      } catch (e) {
+        // Invalid date
+      }
+      
+      context.throwTypeError();
     });
     addType('array', context => {
         if (context.definition.type === 'array' && !Array.isArray(context.value)) {

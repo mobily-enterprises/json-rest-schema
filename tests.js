@@ -193,9 +193,10 @@ describe('3. Core Plugin: Type Handlers', () => {
     { type: 'timestamp', input: { field: 'abc' }, error: 'TYPE_CAST_FAILED' },
 
     // DateTime & Date
-    { type: 'dateTime', input: { field: '2025-01-01T12:30:00Z' }, expected: '2025-01-01 12:30:00' },
+    { type: 'dateTime', input: { field: '2025-01-01T12:30:00Z' }, expected: new Date('2025-01-01T12:30:00Z') },
     { type: 'dateTime', input: { field: 'invalid' }, expected: null },
-    { type: 'date', input: { field: '2025-01-01T12:30:00Z' }, expected: '2025-01-01' },
+    { type: 'date', input: { field: '2025-01-01T12:30:00Z' }, expected: new Date('2025-01-01T00:00:00Z') },
+    { type: 'date', input: { field: '2025-01-01' }, expected: new Date('2025-01-01T00:00:00Z') },
     
     // Array
     { type: 'array', input: { field: 'one' }, expected: ['one'] },

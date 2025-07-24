@@ -113,18 +113,19 @@ describe('2. Core Validation Logic (`Schema.js`)', () => {
     assert.strictEqual(validatedObject.name, null);
   });
 
-  it('should only apply defaultTo values when the object is otherwise valid', async () => {
+  it('should apply defaultTo values even when the object has validation errors', async () => {
     const schema = createSchema({
       name: { type: 'string', required: true },
       role: { type: 'string', defaultTo: 'user' },
     });
     
-    // Case 1: Invalid object, defaultTo should NOT be applied.
+    // Case 1: Invalid object (missing required field), defaultTo should still be applied.
     const { validatedObject: invalidObj, errors } = await schema.validate({});
     assert.strictEqual(Object.keys(errors).length, 1);
-    assert.strictEqual(invalidObj.role, undefined, "defaultTo should not be applied to invalid object");
+    assert.strictEqual(invalidObj.role, 'user', "defaultTo should be applied even to invalid objects");
+    assert.strictEqual(invalidObj.name, null, "Missing required field should be null");
 
-    // Case 2: Valid object, defaultTo SHOULD be applied.
+    // Case 2: Valid object, defaultTo should also be applied.
     const { validatedObject: validObj, errors: validErrors } = await schema.validate({ name: 'test' });
     assert.strictEqual(Object.keys(validErrors).length, 0);
     assert.strictEqual(validObj.role, 'user');

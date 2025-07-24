@@ -110,27 +110,28 @@ function applyConstraints(column, definition) {
  * @param {object} knex - The Knex instance
  * @param {string} tableName - The name of the table to create
  * @param {object} schema - The json-rest-schema instance
+ * @param {string} [idProperty='id'] - The name of the ID column
  * @param {object} [options={}] - Additional options
  * @param {boolean} [options.autoIncrement=true] - Whether to use auto-incrementing IDs
  * @param {boolean} [options.timestamps=false] - Whether to add created_at/updated_at columns
  * @returns {Promise} A promise that resolves when the table is created
  */
-export async function createKnexTable(knex, tableName, schema, options = {}) {
+export async function createKnexTable(knex, tableName, schema, idProperty = 'id', options = {}) {
   const { autoIncrement = true, timestamps = false } = options;
   
   return knex.schema.createTable(tableName, (table) => {
-    // Check if schema has an 'id' field with primary key
-    const hasIdField = schema.structure.id && schema.structure.id.primary === true;
+    // Check if schema has the idProperty field with primary key
+    const hasIdField = schema.structure[idProperty] && schema.structure[idProperty].primary === true;
     
     // Add auto-incrementing ID if no primary key is defined and autoIncrement is true
     if (!hasIdField && autoIncrement) {
-      table.increments('id').primary();
+      table.increments(idProperty).primary();
     }
     
     // Process each field in the schema
     for (const [fieldName, definition] of Object.entries(schema.structure)) {
       // Skip if this is the ID field and we already handled it
-      if (fieldName === 'id' && !hasIdField && autoIncrement) {
+      if (fieldName === idProperty && !hasIdField && autoIncrement) {
         continue;
       }
       

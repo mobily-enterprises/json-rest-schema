@@ -96,7 +96,7 @@ const CorePlugin = {
       // Try to parse the value normally
       const d = new Date(context.value);
       if (isNaN(d.getTime())) {
-        context.throwTypeError();
+        return null;
       }
       
       // Return the Date object directly - let Knex handle the database formatting
@@ -105,26 +105,28 @@ const CorePlugin = {
     addType('date', context => {
       if (!context.value || context.value === '') return null;
       
-      // If already a Date object, return it
+      // Parse the input value to a Date object
+      let d;
       if (context.value instanceof Date) {
-        return isNaN(context.value.getTime()) ? null : context.value;
+        d = context.value;
+      } else {
+        let dateStr = String(context.value);
+        
+        // If it's just a date (YYYY-MM-DD), add time at UTC midnight
+        if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+          dateStr += 'T00:00:00Z';
+        }
+        
+        d = new Date(dateStr);
       }
       
-      // For date-only strings, ensure we parse at UTC midnight to avoid timezone issues
-      let dateStr = String(context.value);
-      
-      // If it's just a date (YYYY-MM-DD), add time at UTC midnight
-      if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
-        dateStr += 'T00:00:00Z';
-      }
-      
-      const d = new Date(dateStr);
       if (isNaN(d.getTime())) {
         context.throwTypeError();
       }
       
-      // Return the Date object directly - let Knex handle the database formatting
-      return d;
+      // Normalize to midnight UTC
+      const normalized = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+      return normalized;
     });
     addType('time', context => {
       if (!context.value || context.value === '') return null;

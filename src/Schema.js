@@ -207,12 +207,18 @@ export class Schema {
     }
     
     // Step 5: Post-process for defaultTo on fields that were not present in the input.
-    // This happens ONLY if the object is otherwise valid, preventing hydration of partial data.
-    if (Object.keys(errors).length === 0 && !options.onlyObjectValues) {
+    // For full validation (!onlyObjectValues), ensure all schema fields are present.
+    if (!options.onlyObjectValues) {
       for(const fieldName in this.structure) {
-        if(validatedObject[fieldName] === undefined && this.structure[fieldName].defaultTo !== undefined) {
-          const def = this.structure[fieldName].defaultTo;
-          validatedObject[fieldName] = typeof def === 'function' ? def() : def;
+        // Only process fields that were not in the original input
+        if(!(fieldName in object) && validatedObject[fieldName] === undefined) {
+          if(this.structure[fieldName].defaultTo !== undefined) {
+            const def = this.structure[fieldName].defaultTo;
+            validatedObject[fieldName] = typeof def === 'function' ? def() : def;
+          } else {
+            // Set fields not in input to null for complete PUT-like records
+            validatedObject[fieldName] = null;
+          }
         }
       }
     }

@@ -130,7 +130,7 @@ describe('createKnexTable with real Knex', () => {
       title: { type: 'string' }
     });
     
-    await createKnexTable(db, 'posts', schema, { timestamps: true });
+    await createKnexTable(db, 'posts', schema, 'id', { timestamps: true });
     
     const info = await db('posts').columnInfo();
     assert.ok(info.created_at, 'Should have created_at');
@@ -177,7 +177,7 @@ describe('createKnexTable with real Knex', () => {
       title: { type: 'string', required: true }
     });
     
-    await createKnexTable(db, 'books', schema, { autoIncrement: false });
+    await createKnexTable(db, 'books', schema, 'id', { autoIncrement: false });
     
     const info = await db('books').columnInfo();
     // Should not have auto-increment id

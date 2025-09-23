@@ -6,7 +6,7 @@ This document outlines the design and implementation plan for `json-rest-schema-
 
 ## Motivation
 
-While `json-rest-schema` currently provides `generateKnexMigration()` for initial table creation, it doesn't handle schema evolution. As applications grow, schemas change - fields are added, types are modified, constraints are updated. Manually writing migration files for these changes is error-prone and time-consuming.
+Earlier versions of `json-rest-schema` included helpers such as `generateKnexMigration()` to scaffold an initial table, but that functionality has since been removed from the core package. The need that sparked those helpers remains: as applications grow, schemas change — fields are added, types are modified, constraints are updated. Manually writing migration files for these changes is error-prone and time-consuming.
 
 This module would:
 - Automatically detect schema changes

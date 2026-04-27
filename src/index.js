@@ -74,4 +74,3 @@ createSchema.use(CorePlugin)
 
 // Export all functions as named exports
 export { createSchema }
-// export { createKnexTable, generateKnexMigration } from './createKnexTable.js';

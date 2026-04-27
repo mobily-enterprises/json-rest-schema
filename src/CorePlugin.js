@@ -3,10 +3,34 @@
  */
 
 import * as flatted from 'flatted'
+import { isDeepStrictEqual } from 'node:util'
 
 /**
  * @typedef {import('./Schema.js').ValidationContext} ValidationContext
  */
+
+const DEFAULT_BOOLEAN_TRUE_VALUES = new Set(['true', '1', 'yes', 'y', 'on'])
+const DEFAULT_BOOLEAN_FALSE_VALUES = new Set(['false', '0', 'no', 'n', 'off'])
+
+function normalizeFiniteNumberInput (value) {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null
+  }
+
+  if (typeof value === 'bigint') {
+    const numberValue = Number(value)
+    return Number.isSafeInteger(numberValue) ? numberValue : null
+  }
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    if (trimmed === '') return null
+    const numberValue = Number(trimmed)
+    return Number.isFinite(numberValue) ? numberValue : null
+  }
+
+  return null
+}
 
 /**
  * The CorePlugin provides the default set of types and validators.
@@ -56,10 +80,9 @@ const CorePlugin = {
 
     addType('blob', context => context.value)
     addType('number', context => {
-      if (context.value === undefined || context.value === null || context.value === '') return 0
-      const r = Number(context.value)
-      if (isNaN(r)) context.throwTypeError()
-      return r
+      const numberValue = normalizeFiniteNumberInput(context.value)
+      if (numberValue === null) context.throwTypeError()
+      return numberValue
     })
     addType('timestamp', context => {
       const r = Number(context.value)
@@ -182,20 +205,65 @@ const CorePlugin = {
       }
     })
     addType('boolean', context => {
-      if (typeof context.value === 'string') {
-        const falseVal = context.definition.stringFalseWhen || 'false'
-        const trueVal = context.definition.stringTrueWhen || 'true'
-        const lowerValue = context.value.toLowerCase()
-        if (lowerValue === falseVal) return false
-        if ([trueVal, 'on'].includes(lowerValue)) return true
-        return false
+      if (typeof context.value === 'boolean') {
+        return context.value
       }
-      return !!context.value
+
+      if (typeof context.value === 'number') {
+        if (context.value === 1) return true
+        if (context.value === 0) return false
+        context.throwTypeError()
+      }
+
+      if (typeof context.value === 'bigint') {
+        if (context.value === 1n) return true
+        if (context.value === 0n) return false
+        context.throwTypeError()
+      }
+
+      if (typeof context.value === 'string') {
+        const falseVal = String(context.definition.stringFalseWhen || 'false').trim().toLowerCase()
+        const trueVal = String(context.definition.stringTrueWhen || 'true').trim().toLowerCase()
+        const lowerValue = context.value.trim().toLowerCase()
+        const falseValues = new Set([...DEFAULT_BOOLEAN_FALSE_VALUES, falseVal])
+        const trueValues = new Set([...DEFAULT_BOOLEAN_TRUE_VALUES, trueVal])
+
+        if (falseValues.has(lowerValue)) return false
+        if (trueValues.has(lowerValue)) return true
+      }
+
+      context.throwTypeError()
     })
     addType('id', context => {
-      const n = parseInt(context.value, 10)
-      if (isNaN(n)) context.throwTypeError()
-      return n
+      if (typeof context.value === 'number') {
+        if (Number.isSafeInteger(context.value) && context.value > 0) {
+          return context.value
+        }
+        context.throwTypeError()
+      }
+
+      if (typeof context.value === 'bigint') {
+        if (context.value > 0n && context.value <= BigInt(Number.MAX_SAFE_INTEGER)) {
+          return Number(context.value)
+        }
+        context.throwTypeError()
+      }
+
+      if (typeof context.value === 'string') {
+        const trimmed = context.value.trim()
+        if (!/^[1-9][0-9]*$/.test(trimmed)) {
+          context.throwTypeError()
+        }
+
+        const numberValue = Number(trimmed)
+        if (!Number.isSafeInteger(numberValue)) {
+          context.throwTypeError()
+        }
+
+        return numberValue
+      }
+
+      context.throwTypeError()
     })
 
     // --- Validator Handlers ---
@@ -223,6 +291,18 @@ const CorePlugin = {
       if (context.value === undefined) return
       if (context.definition.type === 'number' && typeof context.value === 'number' && context.value > context.parameterValue) {
         context.throwParamError('MAX_VALUE', `Value must be no more than ${context.parameterValue}.`, { max: context.parameterValue, actual: context.value })
+      }
+    })
+    addValidator('enum', context => {
+      if (!Array.isArray(context.parameterValue)) {
+        throw new Error(`Enum for ${context.fieldName} must be an array.`)
+      }
+
+      const matches = context.parameterValue.some(allowedValue => isDeepStrictEqual(allowedValue, context.value))
+      if (!matches) {
+        context.throwParamError('ENUM_VALUE', 'Value must match one of the allowed enum values.', {
+          allowed: context.parameterValue
+        })
       }
     })
     addValidator('validator', async context => {
@@ -260,6 +340,7 @@ const CorePlugin = {
     addValidator('unsigned', () => {}) // No-op, used for schema metadata
     addValidator('precision', () => {}) // No-op, used for schema metadata
     addValidator('scale', () => {}) // No-op, used for schema metadata
+    addValidator('temporalPrecision', () => {}) // No-op, used for schema metadata
     addValidator('nullable', () => {}) // No-op, handled in Schema.js
     addValidator('nullOnEmpty', () => {}) // No-op, handled in Schema.js
     addValidator('defaultTo', () => {}) // No-op, handled in Schema.js

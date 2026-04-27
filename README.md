@@ -9,7 +9,7 @@ Let's start with a common use case: validating a user registration form.
 First, import the library's factory function and define the structure of the data you expect.
 
 ```javascript
-import createSchema from './src/index.js';
+import { createSchema } from './src/index.js';
 
 // Define the structure and rules for our user data
 const userSchema = createSchema({
@@ -30,8 +30,7 @@ const userInput = {
 };
 
 async function validateUser() {
-  // The validate method is async, so we use await
-  const { validatedObject, errors } = await userSchema.validate(userInput);
+  const { validatedObject, errors } = await userSchema.create(userInput);
 
   // Check if there were any errors by seeing if the errors object has keys
   if (Object.keys(errors).length > 0) {
@@ -57,7 +56,7 @@ validateUser();
 
 ## 2. Understanding the Validation Result
 
-The `validate()` method always returns an object with two properties: `validatedObject` and `errors`.
+The schema operation methods return an object with two properties: `validatedObject` and `errors`.
 
 ### The `validatedObject`
 
@@ -79,7 +78,7 @@ const invalidInput = {
   age: 16 // Fails 'min: 18'
 };
 
-const { validatedObject, errors } = await userSchema.validate(invalidInput);
+const { validatedObject, errors } = await userSchema.create(invalidInput);
 
 console.log(JSON.stringify(errors, null, 2));
 ```
@@ -113,6 +112,48 @@ The output would look like this:
 * **`message`**: A human-readable message, great for developers or for displaying directly to users in simple cases.
 * **`params`**: Extra context about the failure. This is incredibly useful for creating dynamic error messages (e.g., "You entered 2 characters, but a minimum of 3 is required.").
 
+### Operation Contracts
+
+For explicit write semantics, the schema instance now exposes three operation-specific methods:
+
+```javascript
+await userSchema.create(input);
+await userSchema.replace(input);
+await userSchema.patch(input);
+```
+
+They all return the same `{ validatedObject, errors }` shape, but they differ in how omitted fields are treated:
+
+* **`create()`**: validates a create payload, enforces `required`, applies `defaultTo`, and leaves omitted optional fields omitted.
+* **`replace()`**: validates a full replacement payload, enforces `required`, applies `defaultTo`, and preserves omitted fields.
+* **`patch()`**: validates only explicitly provided fields and returns only the normalized fields that were touched.
+
+### Transport JSON Schema Export
+
+`json-rest-schema` can also export a transport-facing JSON Schema document for adapters that want pre-handler validation.
+
+```javascript
+const userSchema = createSchema({
+  id: { type: 'id', required: true },
+  email: { type: 'string', required: true },
+  age: { type: 'number', min: 18, defaultTo: 18 },
+  status: { type: 'string', enum: ['draft', 'published'] }
+})
+
+const createTransportSchema = userSchema.toJsonSchema()
+const patchTransportSchema = userSchema.toJsonSchema({ mode: 'patch' })
+```
+
+Key points:
+
+* **Draft**: exports draft-07 JSON Schema.
+* **Mode-aware**: `mode: 'create' | 'replace' | 'patch'` controls the `required` list and whether `defaultTo` is emitted.
+* **Transport-facing**: the export is intended for JSON/Ajv/Fastify-style request validation, not for reproducing every in-process coercion path.
+* **Strict field shape**: `additionalProperties` defaults to `false` because runtime validation rejects unknown fields. Override it with `toJsonSchema({ additionalProperties: true })` if needed.
+* **Single source of truth**: only rules owned by `json-rest-schema` are exported. External metadata keys from other layers are ignored.
+* **Passive metadata preserved**: schema-owned passive metadata such as `precision`, `scale`, `unsigned`, and `temporalPrecision` is preserved under `x-json-rest-schema.metadata`.
+* **Custom rules**: if a custom type or validator needs transport export support, attach a `toJsonSchema()` hook to the handler. If you register a custom validator without that hook, export fails loudly instead of silently drifting.
+
 ---
 
 ## 3. Built-in Rules Reference
@@ -126,10 +167,10 @@ A field's `type` defines how the input value will be converted before any other 
 | Type Name | Description |
 |---|---|
 | `string` | Converts the input to a string. By default, it trims whitespace. Fails if the input is an object or array. |
-| `number` | Converts the input to a number. An empty string, `null`, or `undefined` will be cast to `0`. |
-| `boolean`| Converts the input to a boolean. Recognizes `1`, `'true'`, and `'on'` as `true`. All other values become `false`. |
+| `number` | Converts the input to a finite number. Empty strings, whitespace-only strings, and non-finite values fail validation. |
+| `boolean`| Converts the input to a boolean using explicit true/false tokens such as `true`, `false`, `1`, `0`, `yes`, `no`, `on`, and `off`. Unknown values fail validation. |
 | `array` | Ensures the value is an array. If the input is not already an array, it will be wrapped in one (e.g., `'tag1'` becomes `['tag1']`). |
-| `id` | Parses the value into an integer, specifically for identifiers. It will fail if the input cannot be cleanly parsed as a number. |
+| `id` | Parses the value into a positive safe integer identifier. It rejects non-canonical forms such as leading zeroes or strings with junk suffixes. |
 | `date` | Converts a valid date string or timestamp into a `YYYY-MM-DD` formatted string. |
 | `dateTime`| Converts a valid date string or timestamp into a `YYYY-MM-DD HH:MM:SS` formatted string. |
 | `timestamp`| Converts the input to a number, suitable for storing Unix timestamps. |
@@ -149,6 +190,7 @@ Validators are rules that run after a value has been cast to its proper type.
 | `maxLength: <number>` | For `string` types, validates the maximum character length. |
 | `min: <number>` | For `number` types, validates the minimum value. |
 | `max: <number>` | For `number` types, validates the maximum value. |
+| `enum: <array>` | Restricts the field to one of the declared values. Exported as a standard JSON Schema `enum`. |
 | `notEmpty: true` | The field cannot be an empty string (`''`). This is different from `required`, as an empty string is still a defined value. |
 | `length: <number>`| For `string` types, it **truncates** the string to the specified length. For `number` types, it throws an error if the number of digits in the original input exceeds the specified length. |
 | `nullable: true`| Allows the value for this field to be `null`. By default, `null` is not allowed. |
@@ -156,13 +198,11 @@ Validators are rules that run after a value has been cast to its proper type.
 | `lowercase: true` | **Transforms** the string to all lowercase. |
 | `uppercase: true` | **Transforms** the string to all uppercase. |
 | `validator: <function>`| Allows you to provide your own custom validation function for complex, one-off logic. |
-| `defaultTo: <value>` | If the field is not present in the input object and the entire object is valid, this value will be used. Can be a value or a function that returns a value. |
-| `unsigned: true` | For `number` and `id` types, indicates the value should be non-negative (database hint). |
-| `precision: <number>` | For `number` types, total number of digits (database hint for decimal types). |
-| `scale: <number>` | For `number` types, number of decimal places (database hint for decimal types). |
-| `unique: true` | Field value must be unique (database constraint). |
-| `primary: true` | Field is a primary key (database constraint). |
-| `references: <object>` | Foreign key reference with `table`, `column`, `onDelete`, `onUpdate` properties. |
+| `defaultTo: <value>` | If the field is not present in the input object, this value will be used in validation modes that apply defaults. Can be a value or a function that returns a value. |
+| `unsigned: true` | Passive schema metadata indicating non-negative numeric storage intent. Preserved in transport export metadata. |
+| `precision: <number>` | Passive schema metadata for decimal total digits. Preserved in transport export metadata. |
+| `scale: <number>` | Passive schema metadata for decimal fractional digits. Preserved in transport export metadata. |
+| `temporalPrecision: <number>` | Passive schema metadata for time or datetime fractional-second precision. Preserved in transport export metadata. |
 
 ---
 
@@ -182,6 +222,8 @@ Every custom type and validator handler receives a `context` object as its only 
 * **`definition`**: The schema definition object for the current field. For a field defined as `{ type: 'string', min: 5 }`, this would be that exact object.
 * **`parameterName`**: *(For validators only)* The name of the validation rule currently being executed (e.g., `'min'`).
 * **`parameterValue`**: *(For validators only)* The value of the validation rule currently being executed (e.g., the `5` in `min: 5`).
+* **`mode`**: The active validation contract: `'create'`, `'replace'`, or `'patch'`.
+* **`fieldPresent`**: A boolean indicating whether the field was explicitly present in the original input object.
 * **`throwTypeError()`**: A function you can call to throw a standardized `TYPE_CAST_FAILED` error. This is the preferred way to report an error from within a type handler.
 * **`throwParamError(code, message, params)`**: A function you can call to throw a standardized validation error from within a validator. It accepts a custom error `code`, a `message`, and an optional `params` object.
 
@@ -237,7 +279,7 @@ const productSchema = createSchema({
 });
 
 const product = { name: 'Laptop', tags: ' electronics, computers, tech ' };
-const { validatedObject } = await productSchema.validate(product);
+const { validatedObject } = await productSchema.create(product);
 
 // validatedObject.tags will be: ['electronics', 'computers', 'tech']
 console.log(validatedObject.tags);

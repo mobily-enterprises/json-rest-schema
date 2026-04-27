@@ -20,12 +20,16 @@
  * @property {object} objectBeforeCast - The original, unmodified input object.
  * @property {any} valueBeforeCast - The original value of the field.
  * @property {object} options - The global validation options.
+ * @property {'create'|'replace'|'patch'} mode - The active validation contract.
+ * @property {boolean} fieldPresent - Whether the field was explicitly present in the input object.
  * @property {{nullable: boolean, nullOnEmpty: boolean}} computedOptions - Calculated options.
  * @property {string} [parameterName] - The name of the validator parameter being processed.
  * @property {any} [parameterValue] - The value of the validator parameter.
  * @property {function(): void} throwTypeError - Throws a standardized type casting error.
  * @property {function(string, string, object=): void} throwParamError - Throws a standardized parameter validation error.
  */
+
+import { buildJsonSchema } from './transport-schema.js'
 
 /**
  * Represents an instance of a schema that can validate objects against a structure.
@@ -39,8 +43,8 @@ export class Schema {
    */
   constructor (structure, types, validators) {
     this.structure = structure
-    this.types = types // Now passed in directly
-    this.validators = validators // Now passed in directly
+    this.types = types
+    this.validators = validators
   }
 
   // --- Private Helpers ---
@@ -64,6 +68,50 @@ export class Schema {
     return false
   }
 
+  /** @private */
+  _assertSupportedOptions (options = {}) {
+    if (Object.hasOwn(options, 'onlyObjectValues')) {
+      throw new Error('Unsupported validation option `onlyObjectValues`. Call `patch()` directly.')
+    }
+    if (Object.hasOwn(options, 'mode')) {
+      throw new Error('Unsupported validation option `mode`. Call `create()`, `replace()`, or `patch()` directly.')
+    }
+  }
+
+  /** @private */
+  _buildOperationSettings (mode, object) {
+    return {
+      mode,
+      enforceRequired: mode !== 'patch',
+      rejectExplicitUndefined: true,
+      defaultedFields: new Set(),
+      isFieldPresent: (fieldName) => Object.hasOwn(object, fieldName)
+    }
+  }
+
+  /** @private */
+  _buildOperationResult (object, workingObject, settings) {
+    const validatedObject = {}
+
+    const targetFields = settings.mode === 'patch' ? Object.keys(object) : Object.keys(this.structure)
+    for (const fieldName of targetFields) {
+      if (this.structure[fieldName] === undefined) continue
+      const fieldPresent = settings.isFieldPresent(fieldName)
+      const includeField = (
+        workingObject[fieldName] !== undefined ||
+        (fieldPresent && object[fieldName] === null) ||
+        settings.defaultedFields.has(fieldName)
+      )
+
+      if (!includeField) continue
+      if (!fieldPresent && !settings.defaultedFields.has(fieldName)) continue
+
+      validatedObject[fieldName] = workingObject[fieldName]
+    }
+
+    return validatedObject
+  }
+
   /**
    * Processes a single field through the entire validation pipeline (pre-checks, casting, validators).
    * This is the heart of the validation logic for an individual field.
@@ -72,35 +120,48 @@ export class Schema {
    * @param {object} object - The original input object.
    * @param {object} validatedObject - The object being built with validated data.
    * @param {object} options - The global validation options.
+   * @param {object} settings - Mode-specific validation settings.
    * @returns {Promise<ValidationError|null>} An error object if validation fails, otherwise null.
    */
-  async _validateField (fieldName, object, validatedObject, options) {
+  async _validateField (fieldName, object, validatedObject, options, settings) {
     const definition = this.structure[fieldName]
     if (!definition) return null
 
-    // --- 1. Pre-validation Checks ---
     if (Array.isArray(options.skipFields) && options.skipFields.includes(fieldName)) return null
 
-    if (definition.required && object[fieldName] === undefined) {
+    const fieldPresent = settings.isFieldPresent(fieldName)
+    const rawValue = object[fieldName]
+    const valueMissing = rawValue === undefined
+
+    if (settings.enforceRequired && definition.required && (!fieldPresent || valueMissing)) {
       if (!this._paramToBeSkipped('required', options.skipParams, fieldName)) {
         return { field: fieldName, code: 'REQUIRED', message: 'Field is required', params: {} }
       }
     }
 
-    if (object[fieldName] === undefined) {
-      // It's not required and it's not present, so we can stop processing this field.
-      // The 'defaultTo' value will be applied in the main `validate` loop's post-processing step.
+    if (!fieldPresent) {
+      return null
+    }
+
+    if (valueMissing) {
+      if (settings.rejectExplicitUndefined) {
+        return this._typeError(fieldName).errorObject
+      }
       return null
     }
 
     const nullable = definition.nullable === true || options.nullable === true
     const nullOnEmpty = definition.nullOnEmpty === true || options.nullOnEmpty === true
 
-    if (object[fieldName] === null) {
-      return nullable ? null : { field: fieldName, code: 'NOT_NULLABLE', message: 'Field cannot be null', params: {} }
+    if (rawValue === null) {
+      if (nullable) {
+        validatedObject[fieldName] = null
+        return null
+      }
+      return { field: fieldName, code: 'NOT_NULLABLE', message: 'Field cannot be null', params: {} }
     }
 
-    if (String(object[fieldName]) === '' && nullOnEmpty) {
+    if (String(rawValue) === '' && nullOnEmpty) {
       validatedObject[fieldName] = null
       return null
     }
@@ -109,15 +170,16 @@ export class Schema {
     const context = {
       schema: this,
       definition,
-      value: validatedObject[fieldName],
+      value: rawValue,
       fieldName,
       object: validatedObject,
       objectBeforeCast: object,
-      valueBeforeCast: object[fieldName],
+      valueBeforeCast: rawValue,
       options,
+      mode: settings.mode,
+      fieldPresent,
       computedOptions: { nullable: nullable || nullOnEmpty, nullOnEmpty },
 
-      // NEW: Public API for throwing standardized errors from within plugins/handlers
       throwTypeError: () => {
         throw this._typeError(fieldName)
       },
@@ -126,7 +188,6 @@ export class Schema {
       }
     }
 
-    // --- 2. Type Casting ---
     const typeHandler = this.types[definition.type]
     if (!typeHandler) throw new Error(`No casting function for type: ${definition.type}`)
 
@@ -134,14 +195,13 @@ export class Schema {
       const castResult = await typeHandler(context)
       if (castResult !== undefined) {
         validatedObject[fieldName] = castResult
-        context.value = castResult // Update context for subsequent validators.
+        context.value = castResult
       }
     } catch (e) {
-      if (e.errorObject) return e.errorObject // It's a validation error.
-      throw e // It's an unexpected system error, re-throw it.
+      if (e.errorObject) return e.errorObject
+      throw e
     }
 
-    // --- 3. Parameter Validators ---
     for (const paramName in definition) {
       if (paramName === 'type') continue
       if (this._paramToBeSkipped(paramName, options.skipParams, fieldName)) continue
@@ -154,49 +214,39 @@ export class Schema {
           const validatorResult = await validatorHandler(context)
           if (validatorResult !== undefined) {
             validatedObject[fieldName] = validatorResult
-            context.value = validatorResult // Update context value for the next validator.
+            context.value = validatorResult
           }
         } catch (e) {
-          if (e.errorObject) return e.errorObject // It's a validation error.
-          throw e // It's an unexpected system error.
+          if (e.errorObject) return e.errorObject
+          throw e
         }
       }
     }
-    return null // Field is valid
+    return null
   }
 
-  // --- Public API ---
+  /** @private */
+  async _validateWithOperationMode (object, options, mode) {
+    this._assertSupportedOptions(options)
 
-  /**
-   * Validates an object against the schema structure.
-   * This method orchestrates the validation process.
-   * @param {object} object - The input object to validate.
-   * @param {object} [options={}] - Validation options.
-   * @returns {Promise<{validatedObject: object, errors: Object.<string, ValidationError>}>}
-   */
-  async validate (object, options = {}) {
     const errors = {}
-    const validatedObject = { ...object }
+    const workingObject = { ...object }
     const validationPromises = []
+    const settings = this._buildOperationSettings(mode, object)
 
-    // Step 1: Check for fields in the input that are not in the schema.
     for (const fieldName in object) {
       if (this.structure[fieldName] === undefined) {
         errors[fieldName] = { field: fieldName, code: 'FIELD_NOT_ALLOWED', message: 'Field not allowed', params: {} }
       }
     }
 
-    // Step 2: Determine which fields to iterate over for validation.
-    const targetFields = options.onlyObjectValues ? Object.keys(object) : Object.keys(this.structure)
-
-    // Step 3: Concurrently validate all fields.
+    const targetFields = mode === 'patch' ? Object.keys(object) : Object.keys(this.structure)
     for (const fieldName of targetFields) {
       validationPromises.push(
-        this._validateField(fieldName, object, validatedObject, options)
+        this._validateField(fieldName, object, workingObject, options, settings)
       )
     }
 
-    // Step 4: Collect results from all validation pipelines.
     const results = await Promise.all(validationPromises)
     for (const error of results) {
       if (error) {
@@ -204,24 +254,66 @@ export class Schema {
       }
     }
 
-    // Step 5: Post-process for defaultTo on fields that were not present in the input.
-    // For full validation (!onlyObjectValues), ensure all schema fields are present.
-    if (!options.onlyObjectValues) {
+    if (mode !== 'patch') {
       for (const fieldName in this.structure) {
-        // Only process fields that were not in the original input
-        if (!(fieldName in object) && validatedObject[fieldName] === undefined) {
-          if (this.structure[fieldName].defaultTo !== undefined) {
-            const def = this.structure[fieldName].defaultTo
-            validatedObject[fieldName] = typeof def === 'function' ? def() : def
-          } else {
-            // Set fields not in input to null for complete PUT-like records
-            validatedObject[fieldName] = null
-          }
+        if (settings.isFieldPresent(fieldName)) continue
+
+        if (this.structure[fieldName].defaultTo !== undefined) {
+          const def = this.structure[fieldName].defaultTo
+          workingObject[fieldName] = typeof def === 'function' ? def() : def
+          settings.defaultedFields.add(fieldName)
         }
       }
     }
 
-    return { validatedObject, errors }
+    return {
+      validatedObject: this._buildOperationResult(object, workingObject, settings),
+      errors
+    }
+  }
+
+  // --- Public API ---
+
+  /**
+   * Validates an object as a create payload.
+   * Applies required checks and defaults, while leaving omitted optional fields omitted.
+   * @param {object} object - The input object to validate.
+   * @param {object} [options={}] - Validation options.
+   * @returns {Promise<{validatedObject: object, errors: Object.<string, ValidationError>}>}
+   */
+  async create (object, options = {}) {
+    return this._validateWithOperationMode(object, options, 'create')
+  }
+
+  /**
+   * Validates an object as a full replacement payload.
+   * Applies required checks and defaults, while leaving omitted fields omitted.
+   * @param {object} object - The input object to validate.
+   * @param {object} [options={}] - Validation options.
+   * @returns {Promise<{validatedObject: object, errors: Object.<string, ValidationError>}>}
+   */
+  async replace (object, options = {}) {
+    return this._validateWithOperationMode(object, options, 'replace')
+  }
+
+  /**
+   * Validates an object as a partial update payload.
+   * Only explicitly provided fields are validated and returned.
+   * @param {object} object - The input object to validate.
+   * @param {object} [options={}] - Validation options.
+   * @returns {Promise<{validatedObject: object, errors: Object.<string, ValidationError>}>}
+   */
+  async patch (object, options = {}) {
+    return this._validateWithOperationMode(object, options, 'patch')
+  }
+
+  /**
+   * Exports the schema as a transport-facing JSON Schema object.
+   * @param {{mode?: 'create'|'replace'|'patch', additionalProperties?: boolean}} [options={}] - Export options.
+   * @returns {object} A draft-07 JSON Schema object.
+   */
+  toJsonSchema (options = {}) {
+    return buildJsonSchema(this, options)
   }
 
   /**

@@ -88,6 +88,15 @@ const circularRef = { name: 'metadata' }
 circularRef.self = circularRef
 validInput.metadata = circularRef
 
+const transportSchemaExample = createSchema({
+  id: { type: 'id', required: true },
+  email: { type: 'string', required: true, notEmpty: true },
+  age: { type: 'number', min: 18, defaultTo: 18 },
+  status: { type: 'string', enum: ['draft', 'published'] },
+  nickname: { type: 'string', nullOnEmpty: true },
+  publishedAt: { type: 'dateTime', temporalPrecision: 3 }
+})
+
 // --- Main Execution ---
 
 async function runComprehensiveExample () {
@@ -97,7 +106,7 @@ async function runComprehensiveExample () {
   console.log('\n--- 1. Testing Invalid Data to Showcase Errors ---')
   console.log('Input:', invalidInput)
 
-  const { validatedObject: invalidResult, errors: invalidErrors } = await comprehensiveSchema.validate(invalidInput)
+  const { validatedObject: invalidResult, errors: invalidErrors } = await comprehensiveSchema.create(invalidInput)
 
   console.log('\nValidated Object (after attempting validation):', invalidResult)
   console.log('\nValidation Errors Found:')
@@ -112,8 +121,8 @@ async function runComprehensiveExample () {
   // --- Run 2: Valid Data ---
   console.log('\n\n--- 2. Testing Valid Data to Showcase Casting and Defaults ---')
 
-  // We run this without 'onlyObjectValues' to let defaultTo be applied
-  const { validatedObject: validResult, errors: validErrors } = await comprehensiveSchema.validate(validInput)
+  // We run this with create semantics so defaultTo is applied
+  const { validatedObject: validResult, errors: validErrors } = await comprehensiveSchema.create(validInput)
 
   console.log('Input:', validInput)
   console.log('\nValidated Object (after successful validation):', validResult)
@@ -129,6 +138,10 @@ async function runComprehensiveExample () {
   console.log('Serialized metadata is a string:', typeof validResult.metadata === 'string')
   const restored = flatted.parse(validResult.metadata)
   console.log('Circular reference in restored metadata is intact:', restored.self === restored)
+
+  console.log('\n--- 3. Transport JSON Schema Export ---')
+  console.log('Create schema export:', JSON.stringify(transportSchemaExample.toJsonSchema(), null, 2))
+  console.log('Patch schema export:', JSON.stringify(transportSchemaExample.toJsonSchema({ mode: 'patch' }), null, 2))
 }
 
 runComprehensiveExample()

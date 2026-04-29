@@ -155,6 +155,122 @@ function sortSelectionKeys (keys) {
   })
 }
 
+function isNumericPathSegment (segment) {
+  return /^[0-9]+$/.test(segment)
+}
+
+function cloneSchemaIntrospectionSnapshot (schema, seen = new WeakMap()) {
+  if (seen.has(schema)) return seen.get(schema)
+
+  const snapshot = Object.create(Schema.prototype)
+  seen.set(schema, snapshot)
+
+  snapshot.structure = null
+  snapshot.types = schema.types
+  snapshot.validators = schema.validators
+  snapshot.operations = schema.operations
+
+  snapshot.structure = freezeIntrospectionValue(cloneIntrospectionValue(schema.structure, seen))
+  snapshot._installOperationMethods()
+
+  return Object.freeze(snapshot)
+}
+
+function cloneIntrospectionValue (value, seen = new WeakMap()) {
+  if (value === null || typeof value !== 'object') return value
+  if (isSchemaInstance(value)) return cloneSchemaIntrospectionSnapshot(value, seen)
+  if (value instanceof Date) return new Date(value.getTime())
+  if (value instanceof RegExp) {
+    const cloned = new RegExp(value.source, value.flags)
+    cloned.lastIndex = value.lastIndex
+    return cloned
+  }
+  if (seen.has(value)) return seen.get(value)
+
+  if (Array.isArray(value)) {
+    const cloned = []
+    seen.set(value, cloned)
+    for (const item of value) {
+      cloned.push(cloneIntrospectionValue(item, seen))
+    }
+    return cloned
+  }
+
+  if (!isPlainObject(value)) return value
+
+  const cloned = {}
+  seen.set(value, cloned)
+  for (const [key, entry] of Object.entries(value)) {
+    cloned[key] = cloneIntrospectionValue(entry, seen)
+  }
+  return cloned
+}
+
+function freezeIntrospectionValue (value, seen = new WeakSet()) {
+  if (value === null || typeof value !== 'object' || seen.has(value) || isSchemaInstance(value)) {
+    return value
+  }
+
+  seen.add(value)
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      freezeIntrospectionValue(item, seen)
+    }
+  } else {
+    for (const key of Reflect.ownKeys(value)) {
+      freezeIntrospectionValue(value[key], seen)
+    }
+  }
+
+  return Object.freeze(value)
+}
+
+function createIntrospectionSnapshot (value) {
+  return freezeIntrospectionValue(cloneIntrospectionValue(value))
+}
+
+function resolveDefinitionFromSchemaPath (schema, pathSegments, basePath = '') {
+  if (!isSchemaInstance(schema)) return null
+  if (!Array.isArray(pathSegments) || pathSegments.length < 1) return null
+
+  const [fieldName, ...rest] = pathSegments
+  const definition = schema.structure[fieldName]
+  if (definition === undefined) return null
+
+  if (rest.length < 1) return definition
+
+  const fieldPath = buildFieldPath(basePath, fieldName)
+  return resolveNestedDefinitionAtPath(schema, definition, rest, fieldPath)
+}
+
+function resolveNestedDefinitionAtPath (schema, definition, pathSegments, fieldPath) {
+  if (definition?.type === 'object') {
+    const objectMode = schema._resolveObjectFieldMode(fieldPath, definition)
+    if (objectMode.kind !== 'nested') return null
+    return resolveDefinitionFromSchemaPath(objectMode.schema, pathSegments, fieldPath)
+  }
+
+  if (definition?.type === 'array') {
+    const itemsConfig = schema._resolveArrayItemsConfig(fieldPath, definition)
+    if (!itemsConfig || pathSegments.length < 1) return null
+
+    const [indexSegment, ...rest] = pathSegments
+    if (!isNumericPathSegment(indexSegment)) return null
+
+    const itemPath = joinPath(fieldPath, indexSegment)
+    if (itemsConfig.kind === 'schema') {
+      if (rest.length < 1) return null
+      return resolveDefinitionFromSchemaPath(itemsConfig.schema, rest, itemPath)
+    }
+
+    if (rest.length < 1) return itemsConfig.definition
+    return resolveNestedDefinitionAtPath(schema, itemsConfig.definition, rest, itemPath)
+  }
+
+  return null
+}
+
 function buildNestedOptions (options, prefix) {
   const nestedOptions = { ...options }
 
@@ -280,8 +396,8 @@ export class Schema {
    */
   constructor (structure, types, validators, operations = {}) {
     this.structure = structure
-    this.types = types
-    this.validators = validators
+    this.types = Object.freeze({ ...types })
+    this.validators = Object.freeze({ ...validators })
     this.operations = normalizeOperations(operations)
 
     this._installOperationMethods()
@@ -1104,6 +1220,44 @@ export class Schema {
    */
   toJsonSchema (options = {}) {
     return buildJsonSchema(this, options)
+  }
+
+  /**
+   * Returns a frozen snapshot map of the schema's top-level field definitions.
+   * @returns {object}
+   */
+  getFieldDefinitions () {
+    return createIntrospectionSnapshot(this.structure)
+  }
+
+  /**
+   * Resolves a field definition by dotted path. Array items use numeric segments such as `roles.0.id`.
+   * Returns a frozen snapshot, or `null` when the path does not resolve to a field definition.
+   * @param {string} path
+   * @returns {object|null}
+   */
+  getFieldDefinition (path) {
+    if (typeof path !== 'string' || path.trim() === '') {
+      throw new Error('Field path must be a non-empty string.')
+    }
+
+    const definition = resolveDefinitionFromSchemaPath(this, buildPathSegments(path.trim()))
+    return definition === null ? null : createIntrospectionSnapshot(definition)
+  }
+
+  /**
+   * Resolves the `messages` object for a field definition by dotted path.
+   * Returns a frozen snapshot, or an empty frozen object when no messages exist.
+   * @param {string} path
+   * @returns {object}
+   */
+  getFieldMessages (path) {
+    const definition = this.getFieldDefinition(path)
+    if (!definition || typeof definition.messages !== 'object' || definition.messages === null) {
+      return Object.freeze({})
+    }
+
+    return createIntrospectionSnapshot(definition.messages)
   }
 
   /**

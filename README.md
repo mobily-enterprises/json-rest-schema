@@ -394,7 +394,15 @@ Supported operation descriptor keys:
 | `outputFields` | `'validated'` or `'input'` | Which field set is considered when building `validatedObject`. `'validated'` follows schema fields, `'input'` follows only explicitly provided fields. |
 | `rejectExplicitUndefined` | `true` or `false` | Whether an explicitly provided `undefined` value is treated as a type error. Defaults to `true`. |
 
-Method names are generated automatically from operation names. Names that already exist on `Schema` are reserved and rejected. In practice that means names such as `validateWith`, `toJsonSchema`, and `cleanup` cannot be used as operation aliases.
+Method names are generated automatically from operation names. Names that already exist on `Schema` are reserved and rejected. In practice that means names such as `validateWith`, `toJsonSchema`, `getFieldDefinitions`, `getFieldDefinition`, `getFieldMessages`, and `cleanup` cannot be used as operation aliases.
+
+Schema instances also expose three field introspection helpers:
+
+* `schema.getFieldDefinitions()` returns a frozen snapshot map of the top-level field definitions.
+* `schema.getFieldDefinition(path)` resolves one field definition by dotted path, including nested object fields and numeric array segments such as `roles.0.id`, and returns it as a frozen snapshot.
+* `schema.getFieldMessages(path)` returns the field's `messages` object as a frozen snapshot, or `{}` when none exist.
+
+These helpers are intentionally read-only. They clone the schema metadata they expose so adapter code can inspect field settings without gaining a back door to mutate runtime validation behavior.
 
 ### Nested Objects, Arrays, and Opaque Object Bags
 

@@ -24,6 +24,19 @@ function assertError (errors, fieldName, expectedCode) {
   assert.strictEqual(errorObject.code, expectedCode, `For field '${fieldName}', expected error code '${expectedCode}' but got '${errorObject.code}'.`)
 }
 
+function deepFreeze (value, seen = new WeakSet()) {
+  if (!value || typeof value !== 'object' || seen.has(value)) {
+    return value
+  }
+
+  seen.add(value)
+  for (const key of Reflect.ownKeys(value)) {
+    deepFreeze(value[key], seen)
+  }
+
+  return Object.freeze(value)
+}
+
 describe('1. Core API (`createSchema`)', () => {
   it('should export a function `createSchema`', () => {
     assert.strictEqual(typeof createSchema, 'function')
@@ -70,11 +83,127 @@ describe('1. Core API (`createSchema`)', () => {
     assert.ok(mySchema instanceof Schema, 'Did not return a Schema instance')
   })
 
+  it('should expose field definition introspection helpers on schema instances', () => {
+    const schema = createSchema({
+      name: {
+        type: 'string',
+        required: true,
+        messages: {
+          required: 'Name is required.',
+          default: 'Invalid name.'
+        }
+      }
+    })
+
+    assert.strictEqual(typeof schema.getFieldDefinitions, 'function')
+    assert.strictEqual(typeof schema.getFieldDefinition, 'function')
+    assert.strictEqual(typeof schema.getFieldMessages, 'function')
+    assert.deepStrictEqual(schema.getFieldDefinitions(), {
+      name: {
+        type: 'string',
+        required: true,
+        messages: {
+          required: 'Name is required.',
+          default: 'Invalid name.'
+        }
+      }
+    })
+    assert.deepStrictEqual(schema.getFieldDefinition('name'), {
+      type: 'string',
+      required: true,
+      messages: {
+        required: 'Name is required.',
+        default: 'Invalid name.'
+      }
+    })
+    assert.deepStrictEqual(schema.getFieldMessages('name'), {
+      required: 'Name is required.',
+      default: 'Invalid name.'
+    })
+  })
+
+  it('should return detached frozen introspection snapshots that cannot change runtime validation', () => {
+    const workspaceSchema = createSchema({
+      slug: {
+        type: 'string',
+        required: true
+      }
+    })
+    const schema = createSchema({
+      name: {
+        type: 'string',
+        required: true,
+        messages: {
+          required: 'Name is required.'
+        }
+      },
+      workspace: {
+        type: 'object',
+        schema: workspaceSchema
+      }
+    })
+
+    const definitions = schema.getFieldDefinitions()
+    const nameDefinition = schema.getFieldDefinition('name')
+
+    assert.notStrictEqual(definitions, schema.structure)
+    assert.notStrictEqual(definitions.name, schema.structure.name)
+    assert.notStrictEqual(definitions.name.messages, schema.structure.name.messages)
+    assert.notStrictEqual(definitions.workspace.schema, workspaceSchema)
+    assert.ok(definitions.workspace.schema instanceof Schema)
+    assert.ok(Object.isFrozen(definitions))
+    assert.ok(Object.isFrozen(definitions.name))
+    assert.ok(Object.isFrozen(definitions.name.messages))
+    assert.ok(Object.isFrozen(definitions.workspace.schema))
+    assert.throws(() => {
+      definitions.name.required = false
+    }, TypeError)
+    assert.throws(() => {
+      definitions.workspace.schema.structure.slug.required = false
+    }, TypeError)
+    assert.throws(() => {
+      nameDefinition.messages.required = 'Mutated.'
+    }, TypeError)
+
+    const createResult = schema.create({})
+    const nestedResult = schema.create({ workspace: {} })
+
+    assertError(createResult.errors, 'name', 'REQUIRED')
+    assertError(nestedResult.errors, 'name', 'REQUIRED')
+    assertError(nestedResult.errors, 'workspace.slug', 'REQUIRED')
+  })
+
   it('should allow adding a type handler and using it', () => {
     createSchema.addType('custom-string', ctx => `custom-${ctx.value}`)
     const schema = createSchema({ name: { type: 'custom-string' } })
     const { validatedObject } = schema.create({ name: 'test' })
     assert.strictEqual(validatedObject.name, 'custom-test')
+  })
+
+  it('should keep the global type registry extensible after deep-freezing existing schema instances', () => {
+    deepFreeze({
+      definition: Object.freeze({
+        schema: createSchema({
+          name: {
+            type: 'string',
+            required: true
+          }
+        }),
+        mode: 'patch'
+      })
+    })
+
+    assert.doesNotThrow(() => {
+      createSchema.addType('post-freeze-custom-string', ctx => `post-freeze-${ctx.value}`)
+    })
+
+    const schema = createSchema({
+      name: {
+        type: 'post-freeze-custom-string'
+      }
+    })
+    const { validatedObject } = schema.create({ name: 'test' })
+    assert.strictEqual(validatedObject.name, 'post-freeze-test')
   })
 
   it('should allow adding a validator and using it', () => {
@@ -145,6 +274,45 @@ describe('1. Core API (`createSchema`)', () => {
       }),
       /Operation name "toJsonSchema" is reserved and cannot be used as a schema method\./
     )
+  })
+
+  it('should expose nested field messages through getFieldMessages(path)', () => {
+    const workspaceSchema = createSchema({
+      slug: {
+        type: 'string',
+        required: true,
+        messages: {
+          required: 'Workspace slug is required.'
+        }
+      }
+    })
+    const schema = createSchema({
+      workspace: {
+        type: 'object',
+        required: true,
+        schema: workspaceSchema
+      },
+      roles: {
+        type: 'array',
+        items: createSchema({
+          label: {
+            type: 'string',
+            required: true,
+            messages: {
+              required: 'Role label is required.'
+            }
+          }
+        })
+      }
+    })
+
+    assert.deepStrictEqual(schema.getFieldMessages('workspace.slug'), {
+      required: 'Workspace slug is required.'
+    })
+    assert.deepStrictEqual(schema.getFieldMessages('roles.0.label'), {
+      required: 'Role label is required.'
+    })
+    assert.deepStrictEqual(schema.getFieldMessages('roles.0.unknown'), {})
   })
 })
 
@@ -480,6 +648,34 @@ describe('2. Core Validation Logic (`Schema.js`)', () => {
           slug: 'x'
         }
       })
+    })
+
+    it('should resolve nested field definitions by dotted paths', () => {
+      const schema = createSchema({
+        workspace: { type: 'object', required: true, schema: workspaceSummarySchema },
+        roles: { type: 'array', required: true, items: roleSchema },
+        assignableRoleIds: {
+          type: 'array',
+          required: true,
+          items: { type: 'string', minLength: 1 }
+        }
+      })
+
+      assert.deepStrictEqual(schema.getFieldDefinition('workspace.slug'), {
+        type: 'string',
+        required: true,
+        minLength: 3
+      })
+      assert.deepStrictEqual(schema.getFieldDefinition('roles.0.label'), {
+        type: 'string',
+        required: true,
+        minLength: 2
+      })
+      assert.deepStrictEqual(schema.getFieldDefinition('assignableRoleIds.0'), {
+        type: 'string',
+        minLength: 1
+      })
+      assert.strictEqual(schema.getFieldDefinition('workspace.unknown'), null)
     })
 
     it('should preserve opaque object bags unchanged while still enforcing object type checks', () => {

@@ -9,7 +9,7 @@
 
 import { describe, it } from 'node:test'
 import assert from 'node:assert'
-import { createSchema, flattenErrors, getError, hasError, nestErrors } from './src/index.js'
+import { createSchema, createSchemaFactory, flattenErrors, getError, hasError, nestErrors } from './src/index.js'
 import { Schema } from './src/core/Schema.js'
 import { jsonRestSchemaResolver } from './src/adapters/react-hook-form.js'
 import { toVeeValidateSchema } from './src/adapters/vee-validate.js'
@@ -76,6 +76,7 @@ describe('1. Core API (`createSchema`)', () => {
     assert.strictEqual(typeof createSchema.use, 'function')
     assert.strictEqual(typeof createSchema.addType, 'function')
     assert.strictEqual(typeof createSchema.addValidator, 'function')
+    assert.strictEqual(typeof createSchema.createFactory, 'function')
   })
 
   it('`createSchema(structure)` should return an instance of Schema', () => {
@@ -215,6 +216,103 @@ describe('1. Core API (`createSchema`)', () => {
     const schema = createSchema({ framework: { type: 'string', 'must-be-awesome': true } })
     const { errors } = schema.create({ framework: 'good' })
     assertError(errors, 'framework', 'NOT_AWESOME')
+  })
+
+  it('should create isolated schema factories that do not leak custom types back to the global factory', () => {
+    const localSchemaFactory = createSchema.createFactory()
+    localSchemaFactory.addType('scoped-prefix-string', ctx => `scoped-${ctx.value}`)
+
+    const scopedSchema = localSchemaFactory({
+      name: {
+        type: 'scoped-prefix-string'
+      }
+    })
+    const { validatedObject } = scopedSchema.create({ name: 'test' })
+    assert.strictEqual(validatedObject.name, 'scoped-test')
+
+    const globalSchema = createSchema({
+      name: {
+        type: 'scoped-prefix-string'
+      }
+    })
+    assert.throws(() => {
+      globalSchema.create({ name: 'test' })
+    }, /No casting function for type: scoped-prefix-string/)
+  })
+
+  it('should export createSchemaFactory as a named helper with built-in handlers installed by default', () => {
+    const localSchemaFactory = createSchemaFactory()
+    const builtInSchema = localSchemaFactory({
+      name: {
+        type: 'string'
+      }
+    })
+    localSchemaFactory.addType('factory-suffix-string', ctx => `${ctx.value}-factory`)
+
+    const builtInResult = builtInSchema.patch({ name: ' test ' })
+    const localSchema = localSchemaFactory({
+      name: {
+        type: 'factory-suffix-string'
+      }
+    })
+    const { validatedObject } = localSchema.create({ name: 'test' })
+    assert.strictEqual(builtInResult.validatedObject.name, 'test')
+    assert.strictEqual(validatedObject.name, 'test-factory')
+  })
+
+  it('should allow explicitly bare factories via createSchemaFactory({ installCore: false })', () => {
+    const bareSchemaFactory = createSchemaFactory({ installCore: false })
+    const builtInSchema = bareSchemaFactory({
+      name: {
+        type: 'string'
+      }
+    })
+
+    assert.throws(() => {
+      builtInSchema.patch({ name: 'test' })
+    }, /No casting function for type: string/)
+
+    bareSchemaFactory.addType('bare-prefix-string', ctx => `bare-${ctx.value}`)
+    const customSchema = bareSchemaFactory({
+      name: {
+        type: 'bare-prefix-string'
+      }
+    })
+    const { validatedObject } = customSchema.patch({ name: 'test' })
+    assert.strictEqual(validatedObject.name, 'bare-test')
+  })
+
+  it('should merge schema registries when creating a factory from multiple schema sources', () => {
+    const localSchemaFactory = createSchema.createFactory()
+    localSchemaFactory.addType('scoped-upper-string', ctx => String(ctx.value).toUpperCase())
+
+    const globalSchema = createSchema({
+      q: {
+        type: 'string'
+      }
+    })
+    const localSchema = localSchemaFactory({
+      status: {
+        type: 'scoped-upper-string'
+      }
+    })
+
+    const mergedFactory = createSchema.createFactory([globalSchema, localSchema])
+    const mergedSchema = mergedFactory({
+      q: {
+        type: 'string'
+      },
+      status: {
+        type: 'scoped-upper-string'
+      }
+    })
+    const { validatedObject } = mergedSchema.patch({
+      q: ' test ',
+      status: 'active'
+    })
+
+    assert.strictEqual(validatedObject.q, 'test')
+    assert.strictEqual(validatedObject.status, 'ACTIVE')
   })
 
   it('should throw when adding a non-function type handler', () => {

@@ -23,7 +23,7 @@ export default {
     ],
     sidebar: [
       {
-        text: 'README Sections',
+        text: 'Manual',
         items: readmeSidebar
       },
       {

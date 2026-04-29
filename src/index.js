@@ -7,77 +7,157 @@ import { Schema } from './core/Schema.js'
 import CorePlugin from './core/CorePlugin.js'
 import { flattenErrors, getError, hasError, nestErrors } from './utils/error-helpers.js'
 
-/**
- * @type {Object.<string, Function>}
- * Stores all registered type handlers. This is now a directly managed object.
- */
-const globalTypes = {}
+const factoryTypesBySource = new WeakMap()
+const factoryValidatorsBySource = new WeakMap()
 
-/**
- * @type {Object.<string, Function>}
- * Stores all registered validator handlers. This is now a directly managed object.
- */
-const globalValidators = {}
-
-/**
- * Registers a new type handler.
- * @param {string} name - The name of the type (e.g., 'string', 'email').
- * @param {Function} handler - The function to handle the type casting.
- */
-export function addType (name, handler) {
+function registerTypeHandler (types, name, handler) {
   if (typeof handler !== 'function') {
     throw new Error(`Type handler for '${name}' must be a function.`)
   }
-  globalTypes[name] = handler
+  types[name] = handler
 }
 
-/**
- * Registers a new validator handler.
- * @param {string} name - The name of the validator (e.g., 'min', 'required').
- * @param {Function} handler - The function to handle the validation logic.
- */
-export function addValidator (name, handler) {
+function registerValidatorHandler (validators, name, handler) {
   if (typeof handler !== 'function') {
     throw new Error(`Validator handler for '${name}' must be a function.`)
   }
-  globalValidators[name] = handler
+  validators[name] = handler
 }
 
-/**
- * Installs a plugin by calling its `install` method.
- * @param {{install: Function}} plugin - A plugin object with an `install` method.
- * @returns {void}
- */
-export function use (plugin) {
+function installPlugin (plugin, api) {
   if (typeof plugin.install !== 'function') {
     throw new Error('Plugin must have an install method.')
   }
-  // Pass the addType and addValidator functions directly to the plugin
-  plugin.install({ addType, addValidator })
+  plugin.install(api)
 }
 
-/**
- * The main factory function for creating new schema instances.
- * Each created schema will use the currently registered global types and validators.
- * @param {object} structure - The schema definition object.
- * @param {{operations?: object}} [options={}] - Per-schema configuration options.
- * @returns {import('./core/Schema.js').Schema} A new schema instance.
- */
-const createSchema = (structure, options = {}) => new Schema(
-  structure,
-  globalTypes,
-  globalValidators,
-  options.operations
-)
+function attachRegistryMetadata (target, types, validators) {
+  factoryTypesBySource.set(target, types)
+  factoryValidatorsBySource.set(target, validators)
+}
 
-// Attach the registration methods directly to the factory function for convenience.
-// This maintains the existing public API from the original code.
-createSchema.addType = addType
-createSchema.addValidator = addValidator
-createSchema.use = use
+function extractRegistryMetadata (source) {
+  if (!source || (typeof source !== 'object' && typeof source !== 'function')) {
+    return null
+  }
 
-// Automatically install the core plugin to provide out-of-the-box functionality.
-createSchema.use(CorePlugin)
+  const types = factoryTypesBySource.get(source)
+  const validators = factoryValidatorsBySource.get(source)
+  if (!types || !validators) {
+    return null
+  }
 
-// Export all functions as named exports
-export { createSchema, getError, hasError, nestErrors, flattenErrors }
+  return { types, validators }
+}
+
+function normalizeFactorySources (sources) {
+  if (sources.length === 1 && Array.isArray(sources[0])) {
+    return sources[0]
+  }
+
+  return sources
+}
+
+function mergeRegistryHandlers (target, source, kind) {
+  for (const [name, handler] of Object.entries(source)) {
+    if (Object.hasOwn(target, name) && target[name] !== handler) {
+      throw new Error(`Cannot merge schema factories with conflicting ${kind} "${name}".`)
+    }
+    target[name] = handler
+  }
+}
+
+function resolveMergedRegistries (fallbackTypes, fallbackValidators, sources) {
+  const normalizedSources = normalizeFactorySources(sources).filter(Boolean)
+  if (normalizedSources.length < 1) {
+    return {
+      types: { ...fallbackTypes },
+      validators: { ...fallbackValidators }
+    }
+  }
+
+  const mergedTypes = {}
+  const mergedValidators = {}
+  for (const source of normalizedSources) {
+    const metadata = extractRegistryMetadata(source)
+    if (!metadata) {
+      throw new Error('Factory sources must be schema instances or schema factories created by json-rest-schema.')
+    }
+
+    mergeRegistryHandlers(mergedTypes, metadata.types, 'type')
+    mergeRegistryHandlers(mergedValidators, metadata.validators, 'validator')
+  }
+
+  return {
+    types: mergedTypes,
+    validators: mergedValidators
+  }
+}
+
+function createSchemaFactory ({
+  types = {},
+  validators = {},
+  installCore = true
+} = {}) {
+  const factoryTypes = { ...types }
+  const factoryValidators = { ...validators }
+
+  const factory = (structure, options = {}) => {
+    const schema = new Schema(
+      structure,
+      factoryTypes,
+      factoryValidators,
+      options.operations
+    )
+    attachRegistryMetadata(schema, factoryTypes, factoryValidators)
+    return schema
+  }
+
+  attachRegistryMetadata(factory, factoryTypes, factoryValidators)
+
+  factory.addType = (name, handler) => {
+    registerTypeHandler(factoryTypes, name, handler)
+  }
+
+  factory.addValidator = (name, handler) => {
+    registerValidatorHandler(factoryValidators, name, handler)
+  }
+
+  factory.use = (plugin) => {
+    installPlugin(plugin, {
+      addType: factory.addType,
+      addValidator: factory.addValidator
+    })
+  }
+
+  factory.createFactory = (...sources) => {
+    const mergedRegistries = resolveMergedRegistries(factoryTypes, factoryValidators, sources)
+    return createSchemaFactory({
+      types: mergedRegistries.types,
+      validators: mergedRegistries.validators,
+      installCore: false
+    })
+  }
+
+  if (installCore) {
+    factory.use(CorePlugin)
+  }
+
+  return factory
+}
+
+const createSchema = createSchemaFactory({ installCore: true })
+
+function addType (name, handler) {
+  createSchema.addType(name, handler)
+}
+
+function addValidator (name, handler) {
+  createSchema.addValidator(name, handler)
+}
+
+function use (plugin) {
+  createSchema.use(plugin)
+}
+
+export { createSchema, createSchemaFactory, addType, addValidator, use, getError, hasError, nestErrors, flattenErrors }

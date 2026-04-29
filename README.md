@@ -2238,6 +2238,50 @@ const { validatedObject } = productSchema.create(product);
 console.log(validatedObject.tags);
 ```
 
+### Creating an Isolated Schema Factory
+
+Sometimes you want local custom types or validators without mutating the default `createSchema` factory for the whole application.
+
+Use `createSchemaFactory()` for that:
+
+```javascript
+import { createSchemaFactory } from 'json-rest-schema'
+
+const adminSchemaFactory = createSchemaFactory()
+
+adminSchemaFactory.addType('admin-prefix-string', context => {
+  return `admin-${context.value}`
+})
+
+const adminSchema = adminSchemaFactory({
+  name: { type: 'string', required: true },
+  internalCode: { type: 'admin-prefix-string' }
+})
+
+const { validatedObject } = adminSchema.create({
+  name: ' Alice ',
+  internalCode: 'ops'
+})
+
+// Built-in handlers still work.
+console.log(validatedObject.name) // 'Alice'
+
+// Custom handlers stay local to this factory.
+console.log(validatedObject.internalCode) // 'admin-ops'
+```
+
+`createSchemaFactory()` installs the built-in core handlers by default so it is usable out of the box.
+
+If you really want a completely bare registry, make that explicit:
+
+```javascript
+import { createSchemaFactory } from 'json-rest-schema'
+
+const bareFactory = createSchemaFactory({ installCore: false })
+```
+
+That mode is useful only when you intentionally want to provide every type and validator yourself.
+
 ---
 
 ## Advanced: Creating a Plugin

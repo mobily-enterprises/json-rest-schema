@@ -1,4 +1,4 @@
-# ONBOARDING.md - Understanding the `json-rest-schema` Library Architecture
+# Onboarding and technical details
 
 Welcome to the `json-rest-schema` project! This document aims to demystify the library's internal structure and design philosophy. If you're looking to contribute, extend its functionality, or simply understand how it works under the hood, you're in the right place.
 
@@ -39,38 +39,35 @@ This file is the true heart and soul of the library. It acts as the central coor
 
 **Key Features of `index.js`:**
 
-* **Global Registries (`globalTypes` and `globalValidators`):**
-    * At the top level of the `index.js` module, we declare two plain JavaScript objects: `const globalTypes = {};` and `const globalValidators = {};`.
-    * **Crucially, these objects are *not* directly exported.** This design choice makes them effectively "private" to the `index.js` module's scope. They serve as the single, authoritative source for all registered type casting functions and validation logic across the entire application's lifetime when this library is imported.
-    * Think of them as the library's internal knowledge base for how to process different data types and apply various rules.
+* **Factory-Scoped Registries:**
+    * `index.js` no longer uses one pair of plain global registry objects.
+    * Instead, each schema factory owns its own `types` and `validators` registries. That makes isolated factories possible without leaking local custom rules back into the default `createSchema` factory.
+    * The module uses `WeakMap` metadata to remember which registries belong to which schema factories and schema instances.
 
-* **Registration Functions (`addType` and `addValidator`):**
-    * To allow external code (including plugins) to add to our `globalTypes` and `globalValidators` registries, `index.js` exports two dedicated functions: `export function addType(...)` and `export function addValidator(...)`.
-    * These functions are straightforward: they take a `name` (e.g., `'string'`, `'min'`) and a `handler` function, perform a basic type check on the handler, and then assign it to the respective `globalTypes` or `globalValidators` object using the given `name` as the key.
-    * This provides a controlled and consistent API for extending the library's capabilities.
+* **The Factory Constructor (`createSchemaFactory`):**
+    * `createSchemaFactory(options)` is the low-level constructor for creating a schema factory.
+    * By default it installs the built-in core handlers, so `createSchemaFactory()` is immediately usable for normal schemas.
+    * If you want a completely bare registry, you must opt into it explicitly with `createSchemaFactory({ installCore: false })`.
 
-* **The Plugin System (`use` function):**
-    * The `export function use(plugin)` function is our gateway for extensibility. It expects a `plugin` object that *must* have an `install` method.
-    * When `use(plugin)` is called, it executes `plugin.install()`.
-    * The `use` function passes a simple API object to the plugin's `install` method: `{ addType, addValidator }`. This means the plugin only receives the specific functions it needs to register its handlers, without having to know or interact with any other internal structures. It's clean, minimal, and promotes loose coupling.
+* **The Default Factory (`createSchema`):**
+    * `createSchema` is just the default factory created by `createSchemaFactory({ installCore: true })`.
+    * Calling `createSchema(structure, options)` directly instantiates a new `Schema` object from `./src/core/Schema.js`.
+    * The `Schema` instance receives the current factory registries plus any per-schema operation descriptors. That is why schemas created by different factories can see different custom rules without interfering with one another.
 
-* **The Schema Factory (`createSchema`):**
-    * The `createSchema(structure, options)` factory function is the primary way users will interact with the library to define a new schema.
-    * When you call `createSchema({ /* your schema definition */ })`, it doesn't return some intermediary manager. Instead, it directly instantiates a new `Schema` object (from `./src/core/Schema.js`).
-    * **Crucially, it passes the *current references* to our `globalTypes` and `globalValidators` objects to the new `Schema` instance's constructor**, along with any per-schema operation descriptors. This means every `Schema` object created will automatically be "aware" of all the types and validators that have been registered globally up to that point.
+* **Factory Methods (`addType`, `addValidator`, and `use`):**
+    * Every factory exposes `.addType`, `.addValidator`, and `.use`.
+    * These methods mutate only that factory's registries, not some hidden process-wide singleton.
+    * The plugin system still stays simple: `factory.use(plugin)` calls `plugin.install({ addType, addValidator })`.
 
-* **The Public API (`createSchema.addType`, `createSchema.addValidator`, `createSchema.use`):**
-    * For user convenience and to maintain a familiar API shape (if you've seen similar libraries), we attach the globally exported `addType`, `addValidator`, and `use` functions as properties directly onto the `createSchema` function itself:
-        ```javascript
-        createSchema.addType = addType;
-        createSchema.addValidator = addValidator;
-        createSchema.use = use;
-        ```
-    * This allows consumers of the library to import just one thing (`import { createSchema } from 'json-rest-schema';`) and then access all core functionalities through it: `createSchema(...)`, `createSchema.addType(...)`, `createSchema.use(...)`.
+* **Registry Cloning (`factory.createFactory(...)`):**
+    * A factory can create another factory from existing schema instances or other schema factories.
+    * This is how you keep custom rules local while still reusing them intentionally in another context.
+    * Registry merging is strict: if two sources define the same type or validator name with different handlers, the merge throws instead of picking one silently.
 
-* **Automatic Core Plugin Installation:**
-    * Right before the final export, `index.js` explicitly calls `createSchema.use(CorePlugin);`.
-    * This ensures that as soon as your application imports `json-rest-schema`, all the built-in types (like `string`, `number`, `boolean`) and validators (like `min`, `max`, `required`) are automatically registered and ready for use. No extra setup step is required for basic functionality.
+* **Convenience Named Exports (`addType`, `addValidator`, and `use`):**
+    * `index.js` still exports top-level `addType`, `addValidator`, and `use` functions for convenience.
+    * These simply delegate to the default `createSchema` factory.
+    * That preserves the familiar public API while still letting advanced callers create isolated factories when needed.
 
 ### 2.3. `./src/core/Schema.js` - The Validation Workhorse
 

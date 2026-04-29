@@ -33,13 +33,14 @@ Preview that built site locally with:
 npm run docs:preview
 ```
 
-The published docs site is the best place to read the polished guides for:
+The published docs site is the best place to read the same manual as shorter chapters for:
 
 * create / replace / patch semantics
 * nested object and array contracts
+* recursive runtime validation and transport export
+* field introspection and path-scoped validation
 * React Hook Form, Vue + Vuetify, and VeeValidate adapters
 * demo app walkthroughs
-* fair comparisons with libraries like TypeBox, Joi, Zod, and Valibot
 
 ## Getting Started: Your First Schema
 
@@ -89,7 +90,7 @@ if (Object.keys(errors).length > 0) {
 
 ---
 
-## Understanding the Validation Result
+## Validation Results and Error Helpers
 
 The schema operation methods return an object with two properties: `validatedObject` and `errors`.
 
@@ -148,7 +149,7 @@ The output would look like this:
 * **`message`**: A human-readable message, great for developers or for displaying directly to users in simple cases.
 * **`params`**: Extra context about the failure. This is incredibly useful for creating dynamic error messages (e.g., "You entered 2 characters, but a minimum of 3 is required.").
 
-#### Error helper utilities
+### Error helper utilities
 
 If you want a few adapter-friendly utilities around that flat error map, import them directly:
 
@@ -262,7 +263,7 @@ Result:
 }
 ```
 
-### Operation Contracts
+## Operation Contracts
 
 For explicit write semantics, the schema instance exposes three synchronous built-in operation methods:
 
@@ -280,7 +281,7 @@ They all return the same `{ validatedObject, errors }` shape, but they differ in
 
 These are built-in named operation contracts, not special cases in the engine. If you need a different contract, define a custom operation and the schema will generate a matching method alias automatically.
 
-#### Worked operation example
+### Worked operation example
 
 This is easier to understand with one schema and three calls:
 
@@ -358,7 +359,7 @@ That difference is the whole point of operation contracts:
 * Defaults apply on operations that opt into defaults.
 * Missing required fields are only errors on operations that opt into required checks.
 
-### Custom Operations
+## Custom Operations
 
 Custom operations are declared when you create the schema.
 
@@ -396,15 +397,45 @@ Supported operation descriptor keys:
 
 Method names are generated automatically from operation names. Names that already exist on `Schema` are reserved and rejected. In practice that means names such as `validateWith`, `toJsonSchema`, `getFieldDefinitions`, `getFieldDefinition`, `getFieldMessages`, and `cleanup` cannot be used as operation aliases.
 
-Schema instances also expose three field introspection helpers:
+## Field Introspection
+
+Schema instances also expose three read-only introspection helpers:
 
 * `schema.getFieldDefinitions()` returns a frozen snapshot map of the top-level field definitions.
 * `schema.getFieldDefinition(path)` resolves one field definition by dotted path, including nested object fields and numeric array segments such as `roles.0.id`, and returns it as a frozen snapshot.
 * `schema.getFieldMessages(path)` returns the field's `messages` object as a frozen snapshot, or `{}` when none exist.
 
-These helpers are intentionally read-only. They clone the schema metadata they expose so adapter code can inspect field settings without gaining a back door to mutate runtime validation behavior.
+These helpers are intentionally inspection-only. They clone the schema metadata they expose so adapter code can read field settings without gaining a back door to mutate runtime validation behavior.
 
-### Nested Objects, Arrays, and Opaque Object Bags
+Example:
+
+```javascript
+const roleSchema = createSchema({
+  id: { type: 'string', required: true }
+})
+
+const teamSchema = createSchema({
+  name: { type: 'string', required: true },
+  roles: {
+    type: 'array',
+    items: roleSchema
+  }
+})
+
+const topLevelDefinitions = teamSchema.getFieldDefinitions()
+const roleIdDefinition = teamSchema.getFieldDefinition('roles.0.id')
+const roleIdMessages = teamSchema.getFieldMessages('roles.0.id')
+```
+
+In that example:
+
+* `topLevelDefinitions` contains snapshots for `name` and `roles`
+* `roleIdDefinition` resolves through the array item schema to the nested `id` field
+* `roleIdMessages` returns `{}` because that field did not define a `messages` object
+
+Treat the returned objects as metadata for rendering and adapter logic, not as something to mutate.
+
+## Nested Object, Array, and Object-Bag Contracts
 
 This library now supports the three nested contract shapes that come up constantly in shared REST payloads, without turning into a generic schema engine:
 
@@ -414,7 +445,7 @@ This library now supports the three nested contract shapes that come up constant
 
 The important design rule is that these are still **application contracts**, not arbitrary JSON Schema fragments.
 
-#### Nested object fields
+### Nested object fields
 
 Use a child `Schema` instance when a field should itself be validated as an object.
 
@@ -453,7 +484,7 @@ How nested object fields behave:
 
 That operation inheritance is deliberate. A nested object inside a patch payload is usually itself a patch payload.
 
-#### Worked nested object example
+### Worked nested object example
 
 Using the schema above:
 
@@ -536,7 +567,7 @@ Notice what did **not** happen:
 
 That is exactly because the child object inherited the parent `patch` contract.
 
-#### Nested array items
+### Nested array items
 
 Use `items` when every array entry should be validated recursively.
 
@@ -568,7 +599,7 @@ How array items behave:
 
 That `replace` rule for object items is intentional. If a client sends the `roles` array in a patch, they are replacing the array field, so each object item still needs to be complete.
 
-#### Worked nested array example
+### Worked nested array example
 
 ```javascript
 const result = roleCatalogSchema.patch({
@@ -616,7 +647,7 @@ This example shows both supported array styles:
 * `roles` uses a child `Schema` instance for structured object items
 * `assignableRoleIds` uses an inline field definition for primitive items
 
-#### Opaque object bags
+### Opaque object bags
 
 If a field needs to be “some object, but not one this library owns”, make that explicit:
 
@@ -635,7 +666,65 @@ That means:
 * keys are not validated
 * values pass through untouched
 
-This is the intended escape hatch for metadata bags and adapter-owned payloads. It is deliberately narrow: `additionalProperties` only supports the literal value `true`, and you cannot combine it with `schema`.
+This is the intended escape hatch for metadata bags and adapter-owned payloads. It is deliberately narrow: `additionalProperties` only supports the literal value `true`. You can combine it with `schema` when you want to validate known child fields while still allowing arbitrary passthrough keys.
+
+## Typed Object Maps
+
+If you need "an object whose keys are dynamic, but whose values all follow one contract", use `values`:
+
+```javascript
+const schema = createSchema({
+  fieldErrors: {
+    type: 'object',
+    values: {
+      type: 'string',
+      minLength: 1
+    }
+  }
+})
+```
+
+That means:
+
+* the value must be a plain object
+* keys remain dynamic
+* every value is validated with the provided field definition
+
+`values` can point to either:
+
+* an inline field definition such as `{ type: 'string', minLength: 1 }`
+* a child `Schema` instance when every dynamic value should itself be a structured object contract
+
+When `values` points to a child object schema, each dynamic value is validated in `replace` mode for the same reason array object items are: each value is treated as a complete object at that key.
+
+## Known Fields Plus Passthrough Extras
+
+If you need an object with a few validated child fields but you still want to allow extra keys through unchanged, combine `schema` with `additionalProperties: true`:
+
+```javascript
+const detailsSchema = createSchema({
+  message: { type: 'string', required: true },
+  fieldErrors: {
+    type: 'object',
+    values: { type: 'string', minLength: 1 },
+    required: false
+  }
+})
+
+const schema = createSchema({
+  details: {
+    type: 'object',
+    schema: detailsSchema,
+    additionalProperties: true
+  }
+})
+```
+
+That means:
+
+* known child fields are validated and normalized by `detailsSchema`
+* unknown child fields are preserved unchanged
+* transport export becomes `properties` plus `additionalProperties: true`
 
 Worked example:
 
@@ -705,7 +794,7 @@ Result:
 
 That is the intended contract: object-ness is enforced, but the inner bag is not owned by this library.
 
-#### Dotted path options for nested fields
+### Dotted path options for nested fields
 
 Because nested errors use dotted paths, the opt-out options do too.
 
@@ -737,7 +826,107 @@ workspaceViewSchema.patch({
 
 This keeps the options model flat and consistent with the error map.
 
-### Path-Scoped Validation for Forms and Interactive UIs
+## Recursive Schemas
+
+Recursive schema graphs are supported at runtime.
+
+The important distinction is that the library follows the graph of `Schema` instances, not just one level of nesting. That means a field or array item can point back to the same schema instance, and the runtime will keep validating deeper paths using the same operation rules it would use for any non-recursive nested contract.
+
+The practical setup rule is simple: self-references are usually wired after the first `createSchema(...)` call, because the variable must exist before another field can point at it.
+
+### Self-recursive object and array example
+
+```javascript
+const nodeSchema = createSchema({
+  id: { type: 'string', required: true },
+  label: { type: 'string', required: true },
+  parent: { type: 'object', required: false },
+  children: { type: 'array', required: false }
+})
+
+nodeSchema.structure.parent.schema = nodeSchema
+nodeSchema.structure.children.items = nodeSchema
+```
+
+That creates two different recursive edges:
+
+* `parent` is a nested object field that points back to `nodeSchema`
+* `children.items` is an array of `nodeSchema` objects
+
+### Recursive runtime semantics
+
+The same rules still apply inside the recursive graph:
+
+* nested object fields such as `parent` inherit the active operation contract
+* array items that are object schemas still use `replace` semantics
+* recursive errors stay in the same flat dotted-path shape as any other nested error
+
+Example:
+
+```javascript
+const patchParent = nodeSchema.patch({
+  parent: {
+    label: '  Root  '
+  }
+})
+
+const patchChildren = nodeSchema.patch({
+  children: [
+    { label: 'Only child label' }
+  ]
+})
+```
+
+`patchParent` succeeds with:
+
+```javascript
+{
+  validatedObject: {
+    parent: {
+      label: 'Root'
+    }
+  },
+  errors: {}
+}
+```
+
+That happens because `parent` is a nested object field and inherits the outer `patch` operation.
+
+`patchChildren` returns:
+
+```javascript
+{
+  validatedObject: {
+    children: [
+      {
+        label: 'Only child label'
+      }
+    ]
+  },
+  errors: {
+    'children.0.id': {
+      field: 'children.0.id',
+      code: 'REQUIRED',
+      message: 'Field is required',
+      params: {}
+    }
+  }
+}
+```
+
+That happens because array items that point to object schemas are always treated as full replacements.
+
+### Recursive paths, introspection, and transport export
+
+Recursive schemas keep the same dotted-path model everywhere else too:
+
+* `nodeSchema.getFieldDefinition('children.0.label')` resolves correctly
+* `nodeSchema.validateAt('children.0.label', payload)` validates only that selected path
+* recursive transport export is graph-aware rather than stack-recursive
+
+`toJsonSchema()` uses draft-07 `definitions` plus `$ref` for recursive nested contracts, and direct self-recursive object fields point back to `#`. The transport-specific details are covered again in the `Transport JSON Schema Export` chapter below.
+
+## Path-Scoped Validation for Forms and Interactive UIs
 
 Full-object validation is still the right tool for submit boundaries:
 
@@ -754,7 +943,7 @@ But forms often need something narrower:
 
 That is what `validateAt()` and `validatePaths()` are for.
 
-#### `validateAt(path, object, options)`
+### `validateAt(path, object, options)`
 
 Use `validateAt()` when you want one path.
 
@@ -821,7 +1010,7 @@ Result:
 }
 ```
 
-#### Nested path example
+### Nested path example
 
 This is where path-scoped validation becomes most useful.
 
@@ -911,7 +1100,7 @@ That distinction is intentional:
 * selecting `workspace.slug` validates one field
 * selecting `workspace` validates the whole nested object contract
 
-#### `validatePaths(paths, object, options)`
+### `validatePaths(paths, object, options)`
 
 Use `validatePaths()` when you want a subset of fields or a whole form step.
 
@@ -956,7 +1145,7 @@ This is useful for:
 * validating only dirty fields
 * validating a form section before moving on
 
-#### Path options and compatibility
+### Path options and compatibility
 
 Path-scoped validation supports the same flat nested option model:
 
@@ -981,7 +1170,7 @@ workspaceSchema.validatePaths([
 workspaceSchema.validateAt('workspace.slug', values, { mode: 'patch' })
 ```
 
-#### Form integration guidance
+### Form integration guidance
 
 These APIs are meant to help form adapters, but the library still does **not** become a form framework.
 
@@ -1002,7 +1191,7 @@ So the intended split is:
 * **interactive validation**: `validateAt()` / `validatePaths()`
 * **submit boundary validation**: `create()` / `replace()` / `patch()`
 
-### React Hook Form Resolver
+## React Hook Form Resolver
 
 If you use React Hook Form, this package now ships a dedicated resolver adapter as a separate subpath export:
 
@@ -1014,7 +1203,7 @@ import { jsonRestSchemaResolver } from 'json-rest-schema/react-hook-form'
 
 That import path is intentional. The resolver lives outside the main schema engine so the core library does not become React-specific.
 
-#### Basic usage
+### Basic usage
 
 ```javascript
 const profileSchema = createSchema({
@@ -1078,7 +1267,7 @@ That split is intentional:
 * the schema owns final normalization at the submit boundary
 * the UI is free to avoid aggressive value rewriting while the user is typing
 
-#### Edit forms and custom operations
+### Edit forms and custom operations
 
 If the form is editing an existing resource, use a different operation explicitly.
 
@@ -1102,7 +1291,7 @@ const form = useForm({
 })
 ```
 
-#### Field-level re-validation behavior
+### Field-level re-validation behavior
 
 React Hook Form re-validates one field at a time during user interaction. The resolver uses the core path APIs for that subset validation.
 
@@ -1118,7 +1307,7 @@ That default matters because aggressive normalization during typing can feel bad
 * number coercion can fight half-complete input
 * defaults can appear before submit
 
-#### Opting into normalized field-level values
+### Opting into normalized field-level values
 
 If you explicitly want normalized field values during field-level re-validation, opt in:
 
@@ -1134,7 +1323,7 @@ const form = useForm({
 
 This is opt-in on purpose.
 
-#### Returning raw values on success
+### Returning raw values on success
 
 If you want successful resolver results to return raw input values instead of normalized values, use `raw: true`:
 
@@ -1150,7 +1339,7 @@ const form = useForm({
 
 That applies to successful full-form validation too, so defaults and casts are not pushed into the returned `values` object.
 
-#### Error shape
+### Error shape
 
 React Hook Form requires hierarchical nested errors for deep paths. The resolver converts the library's flat dotted-path errors into the structure RHF expects.
 
@@ -1184,26 +1373,24 @@ becomes a React Hook Form error shape equivalent to:
 
 Direct array-field errors are placed under RHF's `root` key for that field array path.
 
-#### Native browser validation
+### Native browser validation
 
 The resolver also respects React Hook Form's `shouldUseNativeValidation` option. If RHF asks for native validation, the adapter sets `setCustomValidity()` / `reportValidity()` using the schema error messages.
 
-### Vue + Vuetify Adapters
+## Vue Form Adapter
 
-If you use Vue, this package now ships a small adapter layer as two separate subpath exports:
+If you use Vue, this package now ships a small adapter layer as a separate subpath export:
 
 ```javascript
 import { useSchemaForm, useSchemaField } from 'json-rest-schema/vue'
-import { createVuetifyRule, fieldProps, getVuetifyErrorMessages } from 'json-rest-schema/vuetify'
 ```
 
 That split is intentional.
 
 * `json-rest-schema/vue` handles schema-aware form orchestration
-* `json-rest-schema/vuetify` handles Vuetify-friendly `rules` and `error-messages` bridges
 * the core schema engine stays framework-agnostic
 
-Just as important: these adapters do **not** import Vue or Vuetify internally.
+Just as important: the adapter does **not** import Vue internally.
 
 They work with:
 
@@ -1213,7 +1400,7 @@ They work with:
 
 That keeps the published package small and avoids turning Vue into a hard dependency of the core runtime.
 
-#### Basic Vue usage
+### Basic Vue usage
 
 Use `useSchemaForm()` when you already own the form values in Vue state.
 
@@ -1293,7 +1480,7 @@ then `result` will be:
 
 That is the same contract as the core schema engine. The Vue adapter does not invent a second validation format.
 
-#### Field-level validation in Vue
+### Field-level validation in Vue
 
 For blur validation, wizard steps, or one-field re-validation, use the path-aware helpers.
 
@@ -1333,7 +1520,7 @@ nameField.validate()
 console.log(nameField.messages)
 ```
 
-#### Submit normalization in Vue
+### Submit normalization in Vue
 
 The clean submit path is:
 
@@ -1361,7 +1548,7 @@ This keeps the same intended split as the rest of the library:
 * raw values while the user is typing
 * normalized values at the submit boundary
 
-#### Edit forms and custom operations in Vue
+### Edit forms and custom operations in Vue
 
 If the form is editing an existing resource, choose a different operation explicitly:
 
@@ -1383,7 +1570,23 @@ const form = useSchemaForm(profileSchema, {
 
 The adapter routes everything back through the schema operation registry, so custom operations behave the same way here as they do in the core runtime.
 
-#### Vuetify `rules` integration
+If you render those forms with Vuetify, use the separate bridge below. It stays thin on purpose and translates the Vue adapter's existing validation results into Vuetify-friendly props and rule callbacks.
+
+## Vuetify Bridge
+
+If you use Vuetify on top of the Vue adapter, import the bridge from its own subpath:
+
+```javascript
+import { createVuetifyRule, fieldProps, getVuetifyErrorMessages } from 'json-rest-schema/vuetify'
+```
+
+This split is intentional:
+
+* `json-rest-schema/vue` owns schema-aware form orchestration
+* `json-rest-schema/vuetify` translates those results into Vuetify `rules` and `error-messages`
+* the validation rules still live in the schema layer, not in component glue code
+
+### Vuetify `rules` integration
 
 Vuetify's `rules` prop is a natural fit for path-scoped validation.
 
@@ -1409,7 +1612,7 @@ That rule:
 
 So the rule stays a thin bridge. It does not re-implement validation logic.
 
-#### Vuetify `fieldProps()` helper
+### Vuetify `fieldProps()` helper
 
 If you want a compact helper for Vuetify inputs, use `fieldProps()`:
 
@@ -1445,7 +1648,7 @@ That adds:
 
 on top of the generated `rules`.
 
-#### Manual Vuetify error messages
+### Manual Vuetify error messages
 
 If you only want the message bridge without generated rules, use `getVuetifyErrorMessages()` directly:
 
@@ -1468,7 +1671,7 @@ This is useful when:
 * you already ran `form.validate()` or `form.validateField()`
 * you want Vuetify to display stored schema errors without re-running rules immediately
 
-#### Worked Vue + Vuetify example
+### Worked Vue + Vuetify example
 
 ```javascript
 import { reactive } from 'vue'
@@ -1531,7 +1734,7 @@ That example preserves the intended layering:
 * Vuetify owns rendering and input UX
 * submit handlers own business logic and API calls
 
-### Demo Apps and Browser Smoke Tests
+## Demo Apps and Browser Smoke Tests
 
 This repo now includes two minimal demo apps documented in `demos/README.md`:
 
@@ -1578,7 +1781,7 @@ Small troubleshooting notes:
 * If a Vuetify control appears blank, make sure you ran the Vue demo's local install step. The demo now declares and imports the Material Design icon font explicitly.
 * If Playwright complains about missing browsers, run `npx playwright install chromium` once from the repo root.
 
-### VeeValidate v5 Bridge
+## VeeValidate v5 Bridge
 
 VeeValidate v5 accepts Standard Schema-compatible validators as `validationSchema`.
 
@@ -1592,7 +1795,7 @@ import { createSchema } from 'json-rest-schema'
 import { toVeeValidateSchema } from 'json-rest-schema/vee-validate'
 ```
 
-#### Basic usage
+### Basic usage
 
 ```javascript
 const profileSchema = createSchema({
@@ -1633,7 +1836,7 @@ then the validated submit payload is equivalent to:
 }
 ```
 
-#### Edit forms and custom operations
+### Edit forms and custom operations
 
 If the form is editing an existing resource, pass the operation explicitly:
 
@@ -1657,7 +1860,7 @@ const { handleSubmit } = useForm({
 })
 ```
 
-#### Important VeeValidate limitation: defaults do not initialize form state
+### Important VeeValidate limitation: defaults do not initialize form state
 
 This is important enough to say clearly:
 
@@ -1674,7 +1877,7 @@ If you want a default field visible in the UI before submit, put it in `initialV
 
 If you only want the normalized payload to contain the default when the user submits, let the schema apply it.
 
-#### Error paths
+### Error paths
 
 The bridge turns the library's flat error map into Standard Schema issues with nested paths.
 
@@ -1704,7 +1907,7 @@ becomes Standard Schema issues equivalent to:
 
 That is what lets VeeValidate map nested array/object errors back onto the right field state.
 
-#### Worked VeeValidate example
+### Worked VeeValidate example
 
 ```javascript
 import { useForm } from 'vee-validate'
@@ -1759,7 +1962,7 @@ This keeps the responsibilities clean:
 * `json-rest-schema` owns validation and normalization
 * your submit handler owns business logic
 
-### Transport JSON Schema Export
+## Transport JSON Schema Export
 
 `json-rest-schema` can also export a transport-facing JSON Schema document for adapters that want pre-handler validation.
 
@@ -1782,13 +1985,14 @@ Key points:
 * **Compatibility**: `mode: 'create' | 'replace' | 'patch'` still works as shorthand for the built-in operations.
 * **Transport-facing**: the export is intended for JSON/Ajv/Fastify-style request validation, not for reproducing every in-process coercion path.
 * **Strict field shape**: `additionalProperties` defaults to `false` because runtime validation rejects unknown fields. Override it with `toJsonSchema({ additionalProperties: true })` if needed.
-* **Recursive export**: nested object fields and array items are exported recursively from the same contract definitions. Nested object fields inherit the active operation, while object schemas used as array items are exported in `replace` mode.
+* **Nested export**: schema-backed nested object contracts are hoisted into draft-07 `definitions` and referenced with `$ref`, so repeated and recursive graphs stay finite. Nested object fields inherit the active operation, while object schemas used as array items or object-map values are exported in `replace` mode.
+* **Recursive graph support**: runtime validation and `toJsonSchema()` both support self-recursive schema graphs. Direct self-recursive object fields point back to `#`, while recursive nested contracts are emitted through `definitions`.
 * **Opaque bags stay opaque**: `type: 'object'` plus `additionalProperties: true` exports as a permissive object field and does not invent child property rules.
 * **Single source of truth**: only rules owned by `json-rest-schema` are exported. External metadata keys from other layers are ignored.
 * **Passive metadata preserved**: schema-owned passive metadata such as `precision`, `scale`, `unsigned`, and `temporalPrecision` is preserved under `x-json-rest-schema.metadata`.
 * **Custom rules**: if a custom type or validator needs transport export support, attach a `toJsonSchema()` hook to the handler. If you register a custom validator without that hook, export fails loudly instead of silently drifting.
 
-#### Worked recursive export example
+### Worked nested export example
 
 ```javascript
 const schema = createSchema({
@@ -1810,15 +2014,48 @@ const schema = createSchema({
 
 Exporting `schema.toJsonSchema()` gives you:
 
-* `workspace` as a nested object schema with `required` fields inherited from the active operation
-* `roles.items` as a nested object schema exported in `replace` mode
+* `workspace` as a `$ref` to a definition whose `required` fields still inherit the active operation
+* `roles.items` as a `$ref` to a nested object definition exported in `replace` mode
 * `metadata` as `{ type: 'object', additionalProperties: true }`
+* object maps as `{ type: 'object', additionalProperties: <value schema> }`
+* passthrough nested objects as validated `properties` plus `additionalProperties: true`
 
 That means the transport export stays aligned with runtime semantics:
 
-* nested objects behave like nested contracts
+* nested objects behave like nested contracts even when the runtime schema graph is recursive
 * array object items behave like complete replacements
 * opaque bags stay opaque instead of pretending to be structured
+
+### Worked recursive export example
+
+Using the same recursive `nodeSchema` from the `Recursive Schemas` chapter above:
+
+```javascript
+const transportSchema = nodeSchema.toJsonSchema()
+```
+
+Key recursive export behaviors:
+
+* a direct self-recursive object field such as `parent` becomes a reference back to `#`
+* recursive nested contracts reached through array items or dynamic object values are hoisted into `definitions`
+* the exporter stays finite because it tracks schema graph nodes, not just call depth
+
+For the `parent` field above, the transport shape is:
+
+```javascript
+{
+  allOf: [
+    {
+      $ref: '#'
+    }
+  ],
+  'x-json-rest-schema': {
+    castType: 'object'
+  }
+}
+```
+
+For the `children.items` edge, the transport shape becomes a `$ref` into `definitions`, and that referenced definition points back to itself for deeper `children.items` recursion.
 
 ---
 
@@ -2123,7 +2360,7 @@ A field's `type` defines how the input value will be converted before any other 
 | `timestamp`| Converts the input to a number, suitable for storing Unix timestamps. |
 | `time` | Converts the input to a normalized `HH:MM:SS` string. |
 | `serialize`| Converts any JavaScript value (including objects with circular references) into a single JSON-like string using `flatted`. |
-| `object` | Requires a plain object value. With `schema`, it becomes a strict nested object contract. With `additionalProperties: true`, it becomes an opaque pass-through object bag. Without either option, it is simply a validated plain object value with no child-field rules. |
+| `object` | Requires a plain object value. With `schema`, it becomes a nested object contract. With `values`, it becomes a typed object map. With `additionalProperties: true`, it becomes either an opaque pass-through object bag or a passthrough nested object when combined with `schema`. Without any of those options, it is simply a validated plain object value with no child-field rules. |
 | `blob` | Passes the value through unchanged. Intended for binary data like files that don't need casting. |
 | `file` | Converts primitive file-handle-like values to strings and rejects objects or arrays. |
 | `none` | The "identity" type. Passes the value through completely unchanged without any casting. |

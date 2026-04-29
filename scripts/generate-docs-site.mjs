@@ -8,6 +8,51 @@ const generatedDir = path.join(docsDir, 'generated')
 const generatedNavPath = path.join(docsDir, '.vitepress', 'generated-readme-nav.mjs')
 const docsIndexPath = path.join(docsDir, 'index.md')
 
+const MANUAL_GROUPS = [
+  {
+    text: 'Basics',
+    slugs: [
+      'installation',
+      'getting-started-your-first-schema',
+      'validation-results-and-error-helpers'
+    ]
+  },
+  {
+    text: 'Contracts',
+    slugs: [
+      'operation-contracts',
+      'custom-operations',
+      'field-introspection',
+      'nested-object-array-and-object-bag-contracts',
+      'typed-object-maps',
+      'known-fields-plus-passthrough-extras',
+      'recursive-schemas',
+      'path-scoped-validation-for-forms-and-interactive-uis',
+      'transport-json-schema-export'
+    ]
+  },
+  {
+    text: 'Adapters and Demos',
+    slugs: [
+      'react-hook-form-resolver',
+      'vue-form-adapter',
+      'vuetify-bridge',
+      'veevalidate-v5-bridge',
+      'demo-apps-and-browser-smoke-tests'
+    ]
+  },
+  {
+    text: 'Recipes and Reference',
+    slugs: [
+      'common-rest-recipes',
+      'built-in-rules-reference',
+      'extending-the-library-custom-rules',
+      'advanced-creating-a-plugin',
+      'design-scope'
+    ]
+  }
+]
+
 function slugifyHeading (heading) {
   return heading
     .toLowerCase()
@@ -63,18 +108,63 @@ function splitReadmeIntoSections (markdown) {
   return { title, introLines, sections }
 }
 
-function buildIndexMarkdown (title, introLines, sections) {
-  const sectionLinks = sections
-    .map(section => `- [${section.sidebarText}](/generated/${section.slug})`)
-    .join('\n')
+function buildManualGroups (sections) {
+  const sectionBySlug = new Map(sections.map(section => [section.slug, section]))
+  const assignedSlugs = new Set()
+
+  const groupedSections = MANUAL_GROUPS.map(group => {
+    const items = group.slugs.map(slug => {
+      const section = sectionBySlug.get(slug)
+
+      if (!section) {
+        throw new Error(`README section '${slug}' is referenced in MANUAL_GROUPS but no matching "##" heading was found.`)
+      }
+
+      if (assignedSlugs.has(slug)) {
+        throw new Error(`README section '${slug}' is assigned to multiple manual groups.`)
+      }
+
+      assignedSlugs.add(slug)
+
+      return {
+        text: section.sidebarText,
+        link: `/generated/${section.slug}`
+      }
+    })
+
+    return {
+      text: group.text,
+      items
+    }
+  })
+
+  const ungroupedSections = sections.filter(section => !assignedSlugs.has(section.slug))
+  if (ungroupedSections.length > 0) {
+    const missing = ungroupedSections.map(section => `"${section.heading}" (${section.slug})`).join(', ')
+    throw new Error(`Every top-level README chapter must be assigned in MANUAL_GROUPS. Missing: ${missing}`)
+  }
+
+  return groupedSections
+}
+
+function buildIndexMarkdown (title, introLines, groupedSections) {
+  const groupsMarkdown = groupedSections.map(group => {
+    const links = group.items
+      .map(item => `- [${item.text}](${item.link})`)
+      .join('\n')
+
+    return `### ${group.text}
+
+${links}`
+  }).join('\n\n')
 
   return `# ${title}
 
 ${introLines}
 
-## Read The README By Section
+## Manual Chapters
 
-${sectionLinks}
+${groupsMarkdown}
 `
 }
 
@@ -85,14 +175,8 @@ ${section.body}
 `
 }
 
-function buildGeneratedNavFile (sections) {
-  const readmeItems = sections.map(section => ({
-    text: section.sidebarText,
-    link: `/generated/${section.slug}`
-  }))
-
-  const source = `export const readmeSidebar = ${JSON.stringify(readmeItems, null, 2)}\n`
-  return source
+function buildGeneratedNavFile (groupedSections) {
+  return `export const readmeSidebar = ${JSON.stringify(groupedSections, null, 2)}\n`
 }
 
 async function removeGeneratedMarkdownFiles () {
@@ -109,11 +193,12 @@ async function removeGeneratedMarkdownFiles () {
 async function main () {
   const readme = await fs.readFile(readmePath, 'utf8')
   const { title, introLines, sections } = splitReadmeIntoSections(readme)
+  const groupedSections = buildManualGroups(sections)
 
   await removeGeneratedMarkdownFiles()
 
-  await fs.writeFile(docsIndexPath, buildIndexMarkdown(title, introLines, sections))
-  await fs.writeFile(generatedNavPath, buildGeneratedNavFile(sections))
+  await fs.writeFile(docsIndexPath, buildIndexMarkdown(title, introLines, groupedSections))
+  await fs.writeFile(generatedNavPath, buildGeneratedNavFile(groupedSections))
 
   await Promise.all(sections.map(section => {
     const outputPath = path.join(generatedDir, `${section.slug}.md`)

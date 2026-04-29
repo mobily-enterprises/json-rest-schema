@@ -16,20 +16,17 @@ export default {
   lastUpdated: true,
   themeConfig: {
     nav: [
-      { text: 'README', link: '/' },
+      { text: 'Manual', link: '/' },
       { text: 'Demo Apps', link: '/demos' },
       { text: 'Contributor Notes', link: '/onboarding' },
       { text: 'GitHub', link: 'https://github.com/mobily-enterprises/json-rest-schema' }
     ],
     sidebar: [
-      {
-        text: 'Manual',
-        items: readmeSidebar
-      },
+      ...readmeSidebar,
       {
         text: 'Other Docs',
         items: [
-          { text: 'README', link: '/' },
+          { text: 'Manual', link: '/' },
           { text: 'Demo Apps', link: '/demos' },
           { text: 'Contributor Notes', link: '/onboarding' }
         ]

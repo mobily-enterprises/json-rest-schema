@@ -31,6 +31,11 @@
  */
 
 import { buildJsonSchema } from './transport-schema.js'
+import {
+  resolveArrayItemsConfig,
+  resolveObjectFieldMode,
+  resolveObjectValuesConfig
+} from './nested-contract.js'
 
 function isThenable (value) {
   return value !== null &&
@@ -520,47 +525,17 @@ export class Schema {
 
   /** @private */
   _resolveObjectFieldMode (fieldPath, definition) {
-    const hasNestedSchema = Object.hasOwn(definition, 'schema')
-    const hasAdditionalProperties = Object.hasOwn(definition, 'additionalProperties')
-
-    if (hasNestedSchema && definition.additionalProperties === true) {
-      throw new Error(`Object field "${fieldPath}" cannot define both schema and additionalProperties: true.`)
-    }
-
-    if (hasAdditionalProperties && definition.additionalProperties !== true) {
-      throw new Error(`Object field "${fieldPath}" only supports additionalProperties: true.`)
-    }
-
-    if (hasNestedSchema) {
-      if (!isSchemaInstance(definition.schema)) {
-        throw new Error(`Object field "${fieldPath}" must define schema as a Schema instance.`)
-      }
-
-      return { kind: 'nested', schema: definition.schema }
-    }
-
-    if (definition.additionalProperties === true) {
-      return { kind: 'opaque' }
-    }
-
-    return { kind: 'plain' }
+    return resolveObjectFieldMode(fieldPath, definition)
   }
 
   /** @private */
   _resolveArrayItemsConfig (fieldPath, definition) {
-    if (!Object.hasOwn(definition, 'items')) return null
+    return resolveArrayItemsConfig(fieldPath, definition)
+  }
 
-    const { items } = definition
-
-    if (isSchemaInstance(items)) {
-      return { kind: 'schema', schema: items }
-    }
-
-    if (!isPlainObject(items) || typeof items.type !== 'string') {
-      throw new Error(`Array field "${fieldPath}" must define items as either a Schema instance or a field definition object.`)
-    }
-
-    return { kind: 'definition', definition: items }
+  /** @private */
+  _resolveObjectValuesConfig (fieldPath, definition) {
+    return resolveObjectValuesConfig(fieldPath, definition)
   }
 
   /** @private */
@@ -707,17 +682,29 @@ export class Schema {
   _validateNestedValue (definition, fieldPath, currentObject, containerKey, options, settings) {
     if (definition.type === 'object') {
       const objectMode = this._resolveObjectFieldMode(fieldPath, definition)
-      if (objectMode.kind !== 'nested') return {}
+      if (objectMode.kind === 'nested') {
+        return this._validateNestedObjectSchema(
+          objectMode,
+          fieldPath,
+          currentObject,
+          containerKey,
+          options,
+          settings
+        )
+      }
 
-      const nestedResult = objectMode.schema._validateWithOperation(
-        settings.operationName,
-        settings.operation,
-        currentObject[containerKey],
-        buildNestedOptions(options, fieldPath)
-      )
+      if (objectMode.kind === 'map') {
+        return this._validateObjectValues(
+          fieldPath,
+          currentObject,
+          containerKey,
+          objectMode.valuesConfig,
+          options,
+          settings
+        )
+      }
 
-      currentObject[containerKey] = nestedResult.validatedObject
-      return prefixErrorMap(nestedResult.errors, fieldPath)
+      return {}
     }
 
     if (definition.type !== 'array') return {}
@@ -726,6 +713,118 @@ export class Schema {
     if (!itemsConfig) return {}
 
     return this._validateArrayItems(fieldPath, currentObject, containerKey, itemsConfig, options, settings)
+  }
+
+  /** @private */
+  _validateNestedObjectSchema (objectMode, fieldPath, currentObject, containerKey, options, settings) {
+    const sourceObject = currentObject[containerKey]
+    const nestedInput = objectMode.allowAdditionalProperties
+      ? this._extractKnownObjectFields(sourceObject, objectMode.schema)
+      : sourceObject
+
+    const nestedResult = objectMode.schema._validateWithOperation(
+      settings.operationName,
+      settings.operation,
+      nestedInput,
+      buildNestedOptions(options, fieldPath)
+    )
+
+    currentObject[containerKey] = objectMode.allowAdditionalProperties
+      ? this._mergeKnownAndPassthroughObjectFields(sourceObject, objectMode.schema, nestedResult.validatedObject)
+      : nestedResult.validatedObject
+
+    return prefixErrorMap(nestedResult.errors, fieldPath)
+  }
+
+  /** @private */
+  _extractKnownObjectFields (sourceObject, nestedSchema) {
+    const knownObject = {}
+
+    for (const [key, value] of Object.entries(sourceObject)) {
+      if (nestedSchema.structure[key] !== undefined) {
+        knownObject[key] = value
+      }
+    }
+
+    return knownObject
+  }
+
+  /** @private */
+  _mergeKnownAndPassthroughObjectFields (sourceObject, nestedSchema, validatedObject) {
+    const mergedObject = {}
+
+    for (const key of Object.keys(sourceObject)) {
+      if (nestedSchema.structure[key] === undefined) {
+        mergedObject[key] = sourceObject[key]
+        continue
+      }
+
+      if (Object.hasOwn(validatedObject, key)) {
+        mergedObject[key] = validatedObject[key]
+      }
+    }
+
+    for (const [key, value] of Object.entries(validatedObject)) {
+      if (!Object.hasOwn(mergedObject, key)) {
+        mergedObject[key] = value
+      }
+    }
+
+    return mergedObject
+  }
+
+  /** @private */
+  _validateObjectValues (fieldPath, currentObject, containerKey, valuesConfig, options, settings) {
+    const originalEntries = currentObject[containerKey]
+    const normalizedEntries = { ...originalEntries }
+    const errors = {}
+
+    currentObject[containerKey] = normalizedEntries
+
+    for (const key of Object.keys(originalEntries)) {
+      const valuePath = joinPath(fieldPath, key)
+
+      if (this._fieldToBeSkipped(valuePath, options)) continue
+
+      const rawValue = normalizedEntries[key]
+
+      if (rawValue === undefined) {
+        if (settings.rejectExplicitUndefined) {
+          this._mergeErrors(errors, this._singleErrorMap(this._typeError(valuePath).errorObject))
+        } else {
+          delete normalizedEntries[key]
+        }
+        continue
+      }
+
+      if (valuesConfig.kind === 'schema') {
+        const valueResult = valuesConfig.schema._validateWithOperation(
+          'replace',
+          valuesConfig.schema.operations.replace,
+          rawValue,
+          buildNestedOptions(options, valuePath)
+        )
+
+        normalizedEntries[key] = valueResult.validatedObject
+        this._mergeErrors(errors, prefixErrorMap(valueResult.errors, valuePath))
+        continue
+      }
+
+      const valueErrors = this._normalizeAndValidateValue(
+        valuesConfig.definition,
+        rawValue,
+        valuePath,
+        normalizedEntries,
+        key,
+        originalEntries,
+        options,
+        this._buildArrayItemSettings(valuesConfig.definition, settings)
+      )
+
+      this._mergeErrors(errors, valueErrors)
+    }
+
+    return errors
   }
 
   /** @private */

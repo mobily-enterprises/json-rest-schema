@@ -37,6 +37,21 @@ function deepFreeze (value, seen = new WeakSet()) {
   return Object.freeze(value)
 }
 
+function getDefinitionRef (schemaFragment) {
+  return schemaFragment?.allOf?.[0]?.$ref || null
+}
+
+function resolveReferencedDefinition (transportSchema, schemaFragment) {
+  const ref = getDefinitionRef(schemaFragment)
+  assert.ok(ref, 'Expected schema fragment to reference a definition.')
+  assert.ok(ref.startsWith('#/definitions/'), `Expected a definitions ref but received "${ref}".`)
+
+  const definitionName = ref.slice('#/definitions/'.length)
+  const definition = transportSchema.definitions?.[definitionName]
+  assert.ok(definition, `Expected definition "${definitionName}" to exist.`)
+  return definition
+}
+
 describe('1. Core API (`createSchema`)', () => {
   it('should export a function `createSchema`', () => {
     assert.strictEqual(typeof createSchema, 'function')
@@ -690,6 +705,41 @@ describe('2. Core Validation Logic (`Schema.js`)', () => {
       assertError(errors, 'roles.0.label', 'REQUIRED')
     })
 
+    it('should validate self-recursive array item schemas at runtime', () => {
+      const nodeSchema = createSchema({
+        id: { type: 'string', required: true, minLength: 1 },
+        children: { type: 'array', required: false }
+      })
+
+      nodeSchema.structure.children.items = nodeSchema
+
+      const { validatedObject, errors } = nodeSchema.create({
+        id: 'root',
+        children: [
+          {
+            id: 'child',
+            children: [
+              {}
+            ]
+          }
+        ]
+      })
+
+      assert.deepStrictEqual(validatedObject, {
+        id: 'root',
+        children: [
+          {
+            id: 'child',
+            children: [
+              {}
+            ]
+          }
+        ]
+      })
+
+      assertError(errors, 'children.0.children.0.id', 'REQUIRED')
+    })
+
     it('should validate primitive array items recursively and keep stable item paths', () => {
       const schema = createSchema({
         assignableRoleIds: {
@@ -798,18 +848,118 @@ describe('2. Core Validation Logic (`Schema.js`)', () => {
       assertError(invalid.errors, 'metadata', 'TYPE_CAST_FAILED')
     })
 
+    it('should validate typed object maps entry-by-entry while preserving dynamic keys', () => {
+      const schema = createSchema({
+        fieldErrors: {
+          type: 'object',
+          values: {
+            type: 'string',
+            minLength: 2
+          }
+        }
+      })
+
+      const input = {
+        fieldErrors: {
+          name: '  ok  ',
+          email: 'ab'
+        }
+      }
+
+      const { validatedObject, errors } = schema.patch(input)
+      assert.deepStrictEqual(errors, {})
+      assert.deepStrictEqual(validatedObject, {
+        fieldErrors: {
+          name: 'ok',
+          email: 'ab'
+        }
+      })
+
+      const invalid = schema.patch({
+        fieldErrors: {
+          name: 'x'
+        }
+      })
+
+      assertError(invalid.errors, 'fieldErrors.name', 'MIN_LENGTH')
+    })
+
+    it('should validate known nested fields while preserving passthrough object properties', () => {
+      const detailsSchema = createSchema({
+        message: { type: 'string', required: true, minLength: 2 },
+        fieldErrors: {
+          type: 'object',
+          values: {
+            type: 'string',
+            minLength: 1
+          },
+          required: false
+        }
+      })
+
+      const schema = createSchema({
+        details: {
+          type: 'object',
+          schema: detailsSchema,
+          additionalProperties: true
+        }
+      })
+
+      const createResult = schema.create({
+        details: {
+          message: '  hello  ',
+          traceId: 'req-1',
+          fieldErrors: {
+            name: '  Name is required.  '
+          }
+        }
+      })
+
+      assert.deepStrictEqual(createResult.errors, {})
+      assert.deepStrictEqual(createResult.validatedObject, {
+        details: {
+          message: 'hello',
+          traceId: 'req-1',
+          fieldErrors: {
+            name: 'Name is required.'
+          }
+        }
+      })
+
+      const missingRequired = schema.create({
+        details: {
+          traceId: 'req-2'
+        }
+      })
+
+      assertError(missingRequired.errors, 'details.message', 'REQUIRED')
+    })
+
     it('should fail clearly for unsupported nested definition combinations', () => {
       const schemaWithInvalidObject = createSchema({
         metadata: {
           type: 'object',
           schema: createSchema({ value: { type: 'string' } }),
-          additionalProperties: true
+          values: { type: 'string' }
         }
       })
 
       assert.throws(
         () => schemaWithInvalidObject.create({ metadata: {} }),
-        /Object field "metadata" cannot define both schema and additionalProperties: true\./
+        /Object field "metadata" cannot define both schema and values\./
+      )
+
+      const schemaWithInvalidValues = createSchema({
+        metadata: {
+          type: 'object',
+          values: { type: 'string' },
+          additionalProperties: true
+        }
+      })
+
+      assert.throws(
+        () => schemaWithInvalidValues.create({ metadata: {} }),
+        /Object field "metadata" cannot define both values and additionalProperties: true\./
       )
 
       const schemaWithInvalidItems = createSchema({
@@ -2191,7 +2341,7 @@ describe('2.5. Transport JSON Schema Export', () => {
     assert.strictEqual(transportSchema.additionalProperties, true)
   })
 
-  it('should export nested object fields, opaque object bags, and recursive array item schemas', () => {
+  it('should export nested object fields, object maps, passthrough nested objects, opaque object bags, and schema-backed array item objects', () => {
     const workspaceSummarySchema = createSchema({
       id: { type: 'id', required: true },
       slug: { type: 'string', required: true, minLength: 3 }
@@ -2204,14 +2354,79 @@ describe('2.5. Transport JSON Schema Export', () => {
 
     const schema = createSchema({
       workspace: { type: 'object', required: true, schema: workspaceSummarySchema },
+      errorDetails: {
+        type: 'object',
+        schema: createSchema({
+          fieldErrors: {
+            type: 'object',
+            values: {
+              type: 'string',
+              minLength: 1
+            },
+            required: false
+          }
+        }),
+        additionalProperties: true
+      },
+      fieldErrors: {
+        type: 'object',
+        values: {
+          type: 'string',
+          minLength: 1
+        }
+      },
       metadata: { type: 'object', additionalProperties: true },
       roles: { type: 'array', required: true, items: roleSchema },
       assignableRoleIds: { type: 'array', items: { type: 'string', minLength: 1 } }
     })
 
     const transportSchema = schema.toJsonSchema()
+    const workspaceDefinition = resolveReferencedDefinition(transportSchema, transportSchema.properties.workspace)
+    const errorDetailsDefinition = resolveReferencedDefinition(transportSchema, transportSchema.properties.errorDetails)
+    const roleDefinition = resolveReferencedDefinition(transportSchema, transportSchema.properties.roles.items)
 
-    assert.deepStrictEqual(transportSchema.properties.workspace, {
+    assert.strictEqual(typeof getDefinitionRef(transportSchema.properties.workspace), 'string')
+    assert.deepStrictEqual(transportSchema.properties.workspace['x-json-rest-schema'], { castType: 'object' })
+
+    assert.deepStrictEqual(transportSchema.properties.metadata, {
+      type: 'object',
+      additionalProperties: true,
+      'x-json-rest-schema': { castType: 'object' }
+    })
+
+    assert.deepStrictEqual(transportSchema.properties.fieldErrors, {
+      type: 'object',
+      additionalProperties: {
+        type: 'string',
+        minLength: 1,
+        'x-json-rest-schema': { castType: 'string' }
+      },
+      'x-json-rest-schema': { castType: 'object' }
+    })
+
+    assert.strictEqual(typeof getDefinitionRef(transportSchema.properties.errorDetails), 'string')
+    assert.deepStrictEqual(transportSchema.properties.errorDetails['x-json-rest-schema'], { castType: 'object' })
+
+    assert.deepStrictEqual(transportSchema.properties.roles, {
+      type: 'array',
+      items: {
+        allOf: transportSchema.properties.roles.items.allOf,
+        'x-json-rest-schema': { castType: 'object' }
+      },
+      'x-json-rest-schema': { castType: 'array' }
+    })
+
+    assert.deepStrictEqual(transportSchema.properties.assignableRoleIds, {
+      type: 'array',
+      items: {
+        type: 'string',
+        minLength: 1,
+        'x-json-rest-schema': { castType: 'string' }
+      },
+      'x-json-rest-schema': { castType: 'array' }
+    })
+
+    assert.deepStrictEqual(workspaceDefinition, {
       type: 'object',
       properties: {
         id: {
@@ -2227,45 +2442,39 @@ describe('2.5. Transport JSON Schema Export', () => {
         }
       },
       additionalProperties: false,
-      required: ['id', 'slug'],
-      'x-json-rest-schema': { castType: 'object' }
+      required: ['id', 'slug']
     })
 
-    assert.deepStrictEqual(transportSchema.properties.metadata, {
+    assert.deepStrictEqual(errorDetailsDefinition, {
       type: 'object',
-      additionalProperties: true,
-      'x-json-rest-schema': { castType: 'object' }
-    })
-
-    assert.deepStrictEqual(transportSchema.properties.roles, {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          id: {
+      properties: {
+        fieldErrors: {
+          type: 'object',
+          additionalProperties: {
             type: 'string',
+            minLength: 1,
             'x-json-rest-schema': { castType: 'string' }
           },
-          label: {
-            type: 'string',
-            'x-json-rest-schema': { castType: 'string' }
-          }
-        },
-        additionalProperties: false,
-        required: ['id', 'label'],
-        'x-json-rest-schema': { castType: 'object' }
+          'x-json-rest-schema': { castType: 'object' }
+        }
       },
-      'x-json-rest-schema': { castType: 'array' }
+      additionalProperties: true
     })
 
-    assert.deepStrictEqual(transportSchema.properties.assignableRoleIds, {
-      type: 'array',
-      items: {
-        type: 'string',
-        minLength: 1,
-        'x-json-rest-schema': { castType: 'string' }
+    assert.deepStrictEqual(roleDefinition, {
+      type: 'object',
+      properties: {
+        id: {
+          type: 'string',
+          'x-json-rest-schema': { castType: 'string' }
+        },
+        label: {
+          type: 'string',
+          'x-json-rest-schema': { castType: 'string' }
+        }
       },
-      'x-json-rest-schema': { castType: 'array' }
+      additionalProperties: false,
+      required: ['id', 'label']
     })
   })
 
@@ -2280,8 +2489,10 @@ describe('2.5. Transport JSON Schema Export', () => {
     })
 
     const patchTransportSchema = schema.toJsonSchema({ operation: 'patch' })
+    const workspaceDefinition = resolveReferencedDefinition(patchTransportSchema, patchTransportSchema.properties.workspace)
 
     assert.strictEqual(Object.hasOwn(patchTransportSchema.properties.workspace, 'required'), false)
+    assert.strictEqual(Object.hasOwn(workspaceDefinition, 'required'), false)
   })
 
   it('should export array item object schemas in replace mode even when the parent export uses patch mode', () => {
@@ -2295,8 +2506,9 @@ describe('2.5. Transport JSON Schema Export', () => {
     })
 
     const patchTransportSchema = schema.toJsonSchema({ operation: 'patch' })
+    const roleDefinition = resolveReferencedDefinition(patchTransportSchema, patchTransportSchema.properties.roles.items)
 
-    assert.deepStrictEqual(patchTransportSchema.properties.roles.items.required, ['id', 'label'])
+    assert.deepStrictEqual(roleDefinition.required, ['id', 'label'])
   })
 
   it('should export nested child schemas with inherited custom operations even when the child schema does not declare them', () => {
@@ -2319,9 +2531,11 @@ describe('2.5. Transport JSON Schema Export', () => {
     })
 
     const transportSchema = schema.toJsonSchema({ operation: 'upsert' })
+    const workspaceDefinition = resolveReferencedDefinition(transportSchema, transportSchema.properties.workspace)
 
     assert.strictEqual(Object.hasOwn(transportSchema.properties.workspace, 'required'), false)
-    assert.strictEqual(transportSchema.properties.workspace.properties.title.default, 'Untitled')
+    assert.strictEqual(Object.hasOwn(workspaceDefinition, 'required'), false)
+    assert.strictEqual(workspaceDefinition.properties.title.default, 'Untitled')
   })
 
   it('should fail clearly for unsupported nested transport export definitions', () => {
@@ -2336,6 +2550,96 @@ describe('2.5. Transport JSON Schema Export', () => {
       () => schema.toJsonSchema(),
       /Object field "metadata" only supports additionalProperties: true\./
     )
+
+    const valuesSchema = createSchema({
+      metadata: {
+        type: 'object',
+        values: { type: 'string' },
+        additionalProperties: true
+      }
+    })
+
+    assert.throws(
+      () => valuesSchema.toJsonSchema(),
+      /Object field "metadata" cannot define both values and additionalProperties: true\./
+    )
+  })
+
+  it('should export self-recursive schema graphs through definition refs instead of failing', () => {
+    const nodeSchema = createSchema({
+      id: { type: 'string', required: true },
+      children: { type: 'array', required: false }
+    })
+
+    nodeSchema.structure.children.items = nodeSchema
+
+    const transportSchema = nodeSchema.toJsonSchema()
+    const recursiveDefinition = resolveReferencedDefinition(transportSchema, transportSchema.properties.children.items)
+
+    assert.strictEqual(typeof getDefinitionRef(transportSchema.properties.children.items), 'string')
+    assert.deepStrictEqual(transportSchema.properties.children.items['x-json-rest-schema'], { castType: 'object' })
+    assert.strictEqual(
+      getDefinitionRef(recursiveDefinition.properties.children.items),
+      getDefinitionRef(transportSchema.properties.children.items)
+    )
+  })
+
+  it('should export direct self-recursive nested object fields by referencing the document root', () => {
+    const nodeSchema = createSchema({
+      id: { type: 'string', required: true },
+      parent: { type: 'object', required: false }
+    })
+
+    nodeSchema.structure.parent.schema = nodeSchema
+
+    const transportSchema = nodeSchema.toJsonSchema()
+
+    assert.deepStrictEqual(transportSchema.properties.parent, {
+      allOf: [
+        {
+          $ref: '#'
+        }
+      ],
+      'x-json-rest-schema': { castType: 'object' }
+    })
+    assert.strictEqual(Object.hasOwn(transportSchema, 'definitions'), false)
+  })
+
+  it('should wrap ref-backed nested object fields before merging custom validator export fragments', () => {
+    const customValidator = () => {}
+    customValidator.toJsonSchema = ({ parameterValue }) => ({
+      minProperties: parameterValue
+    })
+    createSchema.addValidator('transport-nested-object-hint', customValidator)
+
+    const childSchema = createSchema({
+      name: { type: 'string' }
+    })
+
+    const schema = createSchema({
+      profile: {
+        type: 'object',
+        schema: childSchema,
+        'transport-nested-object-hint': 1
+      }
+    })
+
+    const transportSchema = schema.toJsonSchema()
+    const profileDefinition = resolveReferencedDefinition(transportSchema, transportSchema.properties.profile)
+
+    assert.strictEqual(typeof getDefinitionRef(transportSchema.properties.profile), 'string')
+    assert.strictEqual(transportSchema.properties.profile.minProperties, 1)
+    assert.deepStrictEqual(transportSchema.properties.profile['x-json-rest-schema'], { castType: 'object' })
+    assert.deepStrictEqual(profileDefinition, {
+      type: 'object',
+      properties: {
+        name: {
+          type: 'string',
+          'x-json-rest-schema': { castType: 'string' }
+        }
+      },
+      additionalProperties: false
+    })
   })
 
   it('should preserve built-in transforms and passive schema metadata as extension metadata', () => {

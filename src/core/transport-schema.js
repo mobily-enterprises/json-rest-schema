@@ -1,22 +1,19 @@
+import {
+  resolveArrayItemsConfig,
+  resolveObjectFieldMode,
+  resolveObjectValuesConfig
+} from './nested-contract.js'
+
 const JSON_SCHEMA_DRAFT_07 = 'http://json-schema.org/draft-07/schema#'
 const JSON_REST_EXTENSION_KEY = 'x-json-rest-schema'
 const NON_NULL_JSON_TYPES = ['object', 'array', 'string', 'number', 'boolean']
+const EXPORT_CONTEXT_KEY = Symbol('json-rest-schema.exportContext')
 
 const BOOLEAN_TRUE_VALUES = ['true', '1', 'yes', 'y', 'on']
 const BOOLEAN_FALSE_VALUES = ['false', '0', 'no', 'n', 'off']
 
 function isPlainObject (value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
-}
-
-function isSchemaInstance (value) {
-  return value !== null &&
-    typeof value === 'object' &&
-    isPlainObject(value.structure) &&
-    isPlainObject(value.operations) &&
-    typeof value.validateWith === 'function' &&
-    typeof value.toJsonSchema === 'function' &&
-    typeof value.cleanup === 'function'
 }
 
 function extensionMetadataFragment (section, values) {
@@ -224,47 +221,161 @@ function resolveExportOperation (schema, options = {}) {
   }
 }
 
-function resolveObjectFieldMode (fieldName, definition) {
-  const hasNestedSchema = Object.hasOwn(definition, 'schema')
-  const hasAdditionalProperties = Object.hasOwn(definition, 'additionalProperties')
-
-  if (hasNestedSchema && definition.additionalProperties === true) {
-    throw new Error(`Object field "${fieldName}" cannot define both schema and additionalProperties: true.`)
-  }
-
-  if (hasAdditionalProperties && definition.additionalProperties !== true) {
-    throw new Error(`Object field "${fieldName}" only supports additionalProperties: true.`)
-  }
-
-  if (hasNestedSchema) {
-    if (!isSchemaInstance(definition.schema)) {
-      throw new Error(`Object field "${fieldName}" must define schema as a Schema instance.`)
-    }
-
-    return { kind: 'nested', schema: definition.schema }
-  }
-
-  if (definition.additionalProperties === true) {
-    return { kind: 'opaque' }
-  }
-
-  return { kind: 'plain' }
+function createExportOptions (options = {}) {
+  const exportOptions = { ...options }
+  Object.defineProperty(exportOptions, EXPORT_CONTEXT_KEY, {
+    value: {
+      definitions: {},
+      nodes: [],
+      nextDefinitionId: 1,
+      rootNode: null
+    },
+    enumerable: false
+  })
+  return exportOptions
 }
 
-function resolveArrayItemsConfig (fieldName, definition) {
-  if (!Object.hasOwn(definition, 'items')) return null
-
-  const { items } = definition
-
-  if (isSchemaInstance(items)) {
-    return { kind: 'schema', schema: items }
+function getExportContext (options = {}) {
+  if (options[EXPORT_CONTEXT_KEY]) {
+    return options[EXPORT_CONTEXT_KEY]
   }
 
-  if (!isPlainObject(items) || typeof items.type !== 'string') {
-    throw new Error(`Array field "${fieldName}" must define items as either a Schema instance or a field definition object.`)
+  return {
+    definitions: {},
+    nodes: [],
+    nextDefinitionId: 1,
+    rootNode: null
+  }
+}
+
+function sanitizeDefinitionNamePart (value) {
+  const sanitized = String(value)
+    .replace(/[^a-zA-Z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+
+  return sanitized || 'operation'
+}
+
+function isReferenceOnlySchema (schema) {
+  return isPlainObject(schema) &&
+    Object.keys(schema).length === 1 &&
+    typeof schema.$ref === 'string'
+}
+
+function wrapReferenceSchema (schema) {
+  if (!isReferenceOnlySchema(schema)) {
+    return schema
   }
 
-  return { kind: 'definition', definition: items }
+  return {
+    allOf: [schema]
+  }
+}
+
+function findExportNode (exportContext, schema, operationName, operation, additionalProperties) {
+  return exportContext.nodes.find((node) => (
+    node.schema === schema &&
+    node.operationName === operationName &&
+    node.operation === operation &&
+    node.additionalProperties === additionalProperties
+  )) || null
+}
+
+function createDefinitionName (exportContext, operationName) {
+  const suffix = sanitizeDefinitionNamePart(operationName)
+  const definitionName = `SchemaNode_${exportContext.nextDefinitionId}_${suffix}`
+  exportContext.nextDefinitionId += 1
+  return definitionName
+}
+
+function getOrCreateExportNode (schema, options, operationName, operation, additionalProperties, { root = false } = {}) {
+  const exportContext = getExportContext(options)
+  const existingNode = findExportNode(exportContext, schema, operationName, operation, additionalProperties)
+
+  if (existingNode) {
+    if (root) {
+      existingNode.pointer = '#'
+      exportContext.rootNode = existingNode
+    }
+    return existingNode
+  }
+
+  const node = {
+    schema,
+    operationName,
+    operation,
+    additionalProperties,
+    status: 'new',
+    definitionName: root ? null : createDefinitionName(exportContext, operationName),
+    pointer: root ? '#' : null
+  }
+
+  if (!root) {
+    node.pointer = `#/definitions/${node.definitionName}`
+  } else {
+    exportContext.rootNode = node
+  }
+
+  exportContext.nodes.push(node)
+  return node
+}
+
+function buildExportNodeSchema (node, options) {
+  if (node.status === 'built') {
+    return {
+      $ref: node.pointer
+    }
+  }
+
+  if (node.status === 'building') {
+    return {
+      $ref: node.pointer
+    }
+  }
+
+  const exportContext = getExportContext(options)
+  node.status = 'building'
+  if (node.pointer !== '#') {
+    exportContext.definitions[node.definitionName] = {}
+  }
+
+  const objectSchema = buildSchemaObjectFragment(
+    node.schema,
+    options,
+    node.operationName,
+    node.operation,
+    node.additionalProperties
+  )
+
+  node.status = 'built'
+
+  if (node.pointer === '#') {
+    return objectSchema
+  }
+
+  exportContext.definitions[node.definitionName] = objectSchema
+
+  return {
+    $ref: node.pointer
+  }
+}
+
+function buildSchemaReference (schema, options, operationName, operation, additionalProperties = false) {
+  const exportContext = getExportContext(options)
+  const node = getOrCreateExportNode(schema, options, operationName, operation, additionalProperties)
+
+  if (exportContext.rootNode === node) {
+    return { $ref: '#' }
+  }
+
+  return buildExportNodeSchema(node, options)
+}
+
+function createFieldSchemaState (schema, { referenceBacked = false } = {}) {
+  return {
+    schema,
+    referenceBacked
+  }
 }
 
 function buildSchemaObjectFragment (schema, options, operationName, operation, additionalProperties = false) {
@@ -297,12 +408,13 @@ function buildArrayItemsSchema (schema, fieldName, definition, options, operatio
 
   if (itemsConfig.kind === 'schema') {
     return {
-      ...buildSchemaObjectFragment(
+      ...wrapReferenceSchema(buildSchemaReference(
         itemsConfig.schema,
         options,
         'replace',
-        itemsConfig.schema.operations.replace
-      ),
+        itemsConfig.schema.operations.replace,
+        false
+      )),
       [JSON_REST_EXTENSION_KEY]: { castType: 'object' }
     }
   }
@@ -320,19 +432,65 @@ function buildArrayItemsSchema (schema, fieldName, definition, options, operatio
   return buildFieldSchema(schema, `${fieldName}[]`, definition.items, options, itemOperationName, itemOperation)
 }
 
+function buildObjectValuesSchema (schema, fieldName, definition, options, operationName, operation) {
+  const valuesConfig = resolveObjectValuesConfig(fieldName, definition)
+  if (!valuesConfig) return null
+
+  if (valuesConfig.kind === 'schema') {
+    return {
+      ...wrapReferenceSchema(buildSchemaReference(
+        valuesConfig.schema,
+        options,
+        'replace',
+        valuesConfig.schema.operations.replace,
+        false
+      )),
+      [JSON_REST_EXTENSION_KEY]: { castType: 'object' }
+    }
+  }
+
+  const valueOperationName = (
+    valuesConfig.definition.type === 'object' && Object.hasOwn(valuesConfig.definition, 'schema')
+  )
+    ? 'replace'
+    : operationName
+
+  const valueOperation = valueOperationName === 'replace'
+    ? schema.operations.replace
+    : operation
+
+  return buildFieldSchema(schema, `${fieldName}.*`, valuesConfig.definition, options, valueOperationName, valueOperation)
+}
+
 function buildBaseFieldSchema (schema, fieldName, definition, options, operationName, operation) {
   if (definition.type === 'object') {
     const objectMode = resolveObjectFieldMode(fieldName, definition)
 
     if (objectMode.kind === 'nested') {
-      return buildSchemaObjectFragment(objectMode.schema, options, operationName, operation)
+      return createFieldSchemaState(
+        buildSchemaReference(
+          objectMode.schema,
+          options,
+          operationName,
+          operation,
+          objectMode.allowAdditionalProperties === true
+        ),
+        { referenceBacked: true }
+      )
     }
 
     if (objectMode.kind === 'opaque') {
-      return {
+      return createFieldSchemaState({
         type: 'object',
         additionalProperties: true
-      }
+      })
+    }
+
+    if (objectMode.kind === 'map') {
+      return createFieldSchemaState({
+        type: 'object',
+        additionalProperties: buildObjectValuesSchema(schema, fieldName, definition, options, operationName, operation)
+      })
     }
   }
 
@@ -352,14 +510,16 @@ function buildBaseFieldSchema (schema, fieldName, definition, options, operation
   if (definition.type === 'array') {
     const itemsSchema = buildArrayItemsSchema(schema, fieldName, definition, options, operationName, operation)
     if (itemsSchema) {
-      return {
+      return createFieldSchemaState({
         ...baseSchema,
         items: itemsSchema
-      }
+      }, { referenceBacked: isReferenceOnlySchema(baseSchema) })
     }
   }
 
-  return baseSchema
+  return createFieldSchemaState(baseSchema, {
+    referenceBacked: isReferenceOnlySchema(baseSchema)
+  })
 }
 
 function buildFieldSchema (schema, fieldName, definition, options, operationName, operation) {
@@ -372,9 +532,10 @@ function buildFieldSchema (schema, fieldName, definition, options, operationName
     options
   }
 
-  const workingSchema = {
-    ...buildBaseFieldSchema(schema, fieldName, definition, options, operationName, operation)
-  }
+  const baseFieldSchemaState = buildBaseFieldSchema(schema, fieldName, definition, options, operationName, operation)
+  const workingSchema = baseFieldSchemaState.referenceBacked
+    ? wrapReferenceSchema(baseFieldSchemaState.schema)
+    : { ...baseFieldSchemaState.schema }
   const extensionMetadata = { castType: definition.type }
 
   for (const parameterName of Object.keys(definition)) {
@@ -410,7 +571,7 @@ function buildFieldSchema (schema, fieldName, definition, options, operationName
     alternatives.push({ const: '' })
   }
 
-  const finalSchema = buildAnyOfSchema(workingSchema, alternatives)
+  const finalSchema = wrapReferenceSchema(buildAnyOfSchema(workingSchema, alternatives))
 
   if (definition.defaultTo !== undefined && operation.applyDefaults) {
     if (typeof definition.defaultTo !== 'function') {
@@ -425,11 +586,27 @@ function buildFieldSchema (schema, fieldName, definition, options, operationName
 }
 
 export function buildJsonSchema (schema, options = {}) {
-  const { operationName, operation } = resolveExportOperation(schema, options)
-  const additionalProperties = options.additionalProperties === undefined ? false : options.additionalProperties
+  const exportOptions = createExportOptions(options)
+  const { operationName, operation } = resolveExportOperation(schema, exportOptions)
+  const additionalProperties = exportOptions.additionalProperties === undefined ? false : exportOptions.additionalProperties
+  const exportContext = getExportContext(exportOptions)
+  const rootNode = getOrCreateExportNode(
+    schema,
+    exportOptions,
+    operationName,
+    operation,
+    additionalProperties,
+    { root: true }
+  )
 
-  return {
+  const transportSchema = {
     $schema: JSON_SCHEMA_DRAFT_07,
-    ...buildSchemaObjectFragment(schema, options, operationName, operation, additionalProperties)
+    ...buildExportNodeSchema(rootNode, exportOptions)
   }
+
+  if (Object.keys(exportContext.definitions).length > 0) {
+    transportSchema.definitions = exportContext.definitions
+  }
+
+  return transportSchema
 }

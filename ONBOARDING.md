@@ -8,7 +8,7 @@ Welcome to the `json-rest-schema` project! This document aims to demystify the l
 
 Our primary goal for this library is to provide a robust, extensible, and **easy-to-understand** mechanism for defining and validating data schemas. We achieve this by:
 
-* **Centralized, yet Implicit, Management of Registries:** Type casting functions and validation rules are managed globally within the library's entry point, but without the need for an explicit "Manager" class instance to retrieve them.
+* **Factory-Scoped Registries with a Simple Default Entry Point:** Type casting functions and validation rules are exposed from one familiar public entry point, but each schema factory still owns its own registries.
 * **Clear Separation of Concerns:** The responsibility for *defining* types/validators is separate from the responsibility for *applying* them during validation.
 * **Plugin-Based Extensibility:** New types and validators can be seamlessly added through a straightforward plugin system.
 * **Direct API Access:** Key functions for interacting with the library are exposed directly, minimizing layers of abstraction.
@@ -28,6 +28,7 @@ The source tree now stays intentionally shallow:
 
 * `./src/index.js` is the public entry point
 * `./src/core/` contains the runtime validation engine and transport export
+* `./src/core/nested-contract.js` keeps nested contract shape parsing shared between runtime validation and transport export
 * `./src/utils/` contains shared helper utilities
 * `./src/adapters/` contains optional UI-library integration layers
 
@@ -78,7 +79,7 @@ While `index.js` manages the global registries, the `Schema` class is where the 
 * **Self-Contained Validation Logic:** Each instance of `Schema` represents a single, defined data structure. It contains the logic to traverse an input object, apply type casting, and run validation rules against its own `structure`.
 * **Dependency Injection in Constructor:** Unlike the previous design, the `Schema` constructor (`constructor(structure, types, validators, operations)`) now explicitly receives the `types`, `validators`, and per-schema `operations` it needs from the `createSchema` factory function. This makes its dependencies clear and improves its testability.
 * **Operation Registry:** `create`, `replace`, and `patch` are default operation descriptors stored in an internal registry. Additional operations can be declared per schema, and the `Schema` instance automatically installs method aliases for them. Operation descriptors currently support `targetFields`, `enforceRequired`, `applyDefaults`, `outputFields`, and `rejectExplicitUndefined`.
-* **Recursive Contract Support:** Nested object contracts are expressed with `type: 'object'` plus `schema`, nested array items are expressed with `type: 'array'` plus `items`, and opaque object bags are expressed with `type: 'object'` plus `additionalProperties: true`. This is intentionally much narrower than general JSON Schema.
+* **Recursive Contract Support:** Nested object contracts are expressed with `type: 'object'` plus `schema`, typed object maps are expressed with `type: 'object'` plus `values`, nested array items are expressed with `type: 'array'` plus `items`, and opaque or passthrough object bags are expressed with `type: 'object'` plus `additionalProperties: true`. Recursive schema graphs are supported across those nested schema edges. This is intentionally much narrower than general JSON Schema.
 * **`_validateField` Method:** This private method is the granular core of the validation. For each field in your schema, it synchronously orchestrates:
     1.  **Pre-checks:** Handling `required` rules, skipping fields, and dealing with `null` or empty values based on options.
     2.  **Type Casting:** It looks up the appropriate type handler from its received `this.types` registry and attempts to transform the field's value.
@@ -129,18 +130,20 @@ This module turns a `Schema` instance into a draft-07 JSON Schema document for t
 **Key Features of `transport-schema.js`:**
 
 * **Operation-aware export:** The same operation descriptors used at runtime control `required` fields and exported defaults.
-* **Recursive export:** Nested object contracts and array item contracts are exported recursively from the same schema definitions.
+* **Nested export:** Schema-backed nested contracts are exported as graph-aware draft-07 `definitions` plus `$ref`, so repeated and recursive schema graphs stay finite. Direct self-recursive object fields point back to `#`, while deeper recursive edges use named `definitions`.
 * **Intentional restraint:** The exporter supports nested objects, nested arrays, and opaque object bags, but it does not grow into a general-purpose JSON Schema authoring layer. That line keeps the library readable and keeps runtime behavior aligned with export behavior.
 
 **Why the nested scope stays small:**
 
-We support only three nested shapes because they cover most real shared REST contracts without creating a second generic schema language inside the library:
+We support only a small set of nested shapes because they cover most real shared REST contracts without creating a second generic schema language inside the library:
 
 * `type: 'object'` plus `schema`
 * `type: 'array'` plus `items`
+* `type: 'object'` plus `values`
 * `type: 'object'` plus `additionalProperties: true`
+* `type: 'object'` plus `schema` and `additionalProperties: true`
 
-We intentionally do **not** support arbitrary embedded JSON Schema, `oneOf` / `anyOf`, recursive refs, or mixed known-field-plus-arbitrary-rest object semantics. That restraint is what keeps both the runtime and the docs understandable for a junior developer reading the code for the first time.
+We intentionally do **not** support arbitrary embedded JSON Schema or library-authored `oneOf` / `anyOf` trees. We **do** support recursive schema graphs by exporting them through draft-07 `definitions` and `$ref`, because the runtime schema model is a graph rather than a plain tree. The object support still stays narrow after the map/passthrough additions: known fields can come from `schema`, dynamic values can come from `values`, and passthrough extras are only enabled with the literal flag `additionalProperties: true`. That restraint is what keeps both the runtime and the docs understandable for a junior developer reading the code for the first time.
 
 ### 2.6. `./src/utils/error-helpers.js` - Error Utilities
 
@@ -262,5 +265,40 @@ Important design choices:
 * **Configuration errors still throw:** invalid schema instances or invalid operation configuration are programmer errors and should fail loudly. Validation failures return `issues`.
 
 There is also one VeeValidate-specific caveat worth preserving in the docs: Standard Schema validation can normalize submitted output, but VeeValidate still expects callers to supply their own `initialValues`. Schema defaults do not magically pre-populate the UI state.
+
+---
+
+## 3. Docs and Site Generation
+
+The docs site is intentionally generated from the same markdown contributors edit in the repo, instead of maintaining a second hand-written manual.
+
+Current source-of-truth rules:
+
+* `README.md` is the end-user manual
+* `ONBOARDING.md` is the contributor manual
+* `docs/onboarding.md` includes `ONBOARDING.md`
+* `docs/demos.md` includes `demos/README.md`
+
+The README-driven site flow is:
+
+1. `npm run docs:prepare` runs `scripts/generate-docs-site.mjs`
+2. that script splits `README.md` into chapter pages under `docs/generated/`
+3. it also regenerates `docs/index.md` and `docs/.vitepress/generated-readme-nav.mjs`
+4. `vitepress build docs` then renders the static site from those generated files
+
+Two design choices are important here:
+
+* the chapter boundaries are driven by `##` headings in `README.md`
+* the sidebar grouping inside `generate-docs-site.mjs` is explicit on purpose, so a newly added or renamed chapter must be categorized instead of silently landing in the wrong place
+
+That deliberate friction prevents documentation drift. If a contributor adds a new top-level manual chapter, the site generator should fail until the chapter is given an intentional place in the docs navigation.
+
+`npm run docs:build` goes one step further: it builds the VitePress site and the standalone demo apps, then copies the demo outputs into the final static site.
+
+When editing docs, keep the structure aligned with the code seams:
+
+* runtime validation and transport export should be documented separately when their behavior differs
+* recursive runtime support, recursive path behavior, and recursive transport export should be described explicitly rather than implied
+* adapter pages should stay thin and should document how they route back into the shared schema engine instead of inventing second validation systems
 
 ---

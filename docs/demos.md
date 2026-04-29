@@ -1,7 +1,7 @@
 # Live Demos
 
-- [Open the React Hook Form demo](/demos/react-rhf/)
-- [Open the Vue + Vuetify demo](/demos/vue-vuetify/)
+- <a href="../demos/react-rhf/" target="_self">Open the React Hook Form demo</a>
+- <a href="../demos/vue-vuetify/" target="_self">Open the Vue + Vuetify demo</a>
 
 These are published as standalone static apps under the same GitHub Pages site as the docs.
 

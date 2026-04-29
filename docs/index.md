@@ -1,4 +1,4 @@
-# How to Use the Schema Validation Library: A Tutorial
+# Tutorial
 
 Welcome! This tutorial will walk you through everything you need to know to use the schema validation library effectively. We'll start with the basics and progressively move to more advanced topics like creating your own custom rules.
 

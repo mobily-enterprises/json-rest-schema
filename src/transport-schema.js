@@ -5,6 +5,20 @@ const NON_NULL_JSON_TYPES = ['object', 'array', 'string', 'number', 'boolean']
 const BOOLEAN_TRUE_VALUES = ['true', '1', 'yes', 'y', 'on']
 const BOOLEAN_FALSE_VALUES = ['false', '0', 'no', 'n', 'off']
 
+function isPlainObject (value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function isSchemaInstance (value) {
+  return value !== null &&
+    typeof value === 'object' &&
+    isPlainObject(value.structure) &&
+    isPlainObject(value.operations) &&
+    typeof value.validateWith === 'function' &&
+    typeof value.toJsonSchema === 'function' &&
+    typeof value.cleanup === 'function'
+}
+
 function extensionMetadataFragment (section, values) {
   return {
     [JSON_REST_EXTENSION_KEY]: {
@@ -130,6 +144,7 @@ function buildAnyOfSchema (baseSchema, alternatives) {
   if (finalAlternatives.length === 1) {
     return baseSchema
   }
+
   return { anyOf: finalAlternatives }
 }
 
@@ -173,22 +188,190 @@ function normalizeMode (mode) {
   throw new Error(`Unsupported JSON Schema export mode '${mode}'. Expected 'create', 'replace', or 'patch'.`)
 }
 
-function buildFieldSchema (schema, fieldName, definition, options) {
-  const mode = normalizeMode(options.mode)
-  const exportContext = {
+function resolveOperationName (schema, options = {}) {
+  if (options.mode !== undefined && options.operation !== undefined) {
+    const normalizedMode = normalizeMode(options.mode)
+    if (normalizedMode !== options.operation) {
+      throw new Error(`Conflicting JSON Schema export options: mode '${normalizedMode}' does not match operation '${options.operation}'.`)
+    }
+  }
+
+  if (options.operation !== undefined) {
+    if (!schema.operations[options.operation]) {
+      throw new Error(`Unknown JSON Schema export operation '${options.operation}'.`)
+    }
+    return options.operation
+  }
+
+  return normalizeMode(options.mode)
+}
+
+function resolveExportOperation (schema, options = {}) {
+  if (options.operationName !== undefined && options.operationDescriptor !== undefined) {
+    return {
+      operationName: options.operationName,
+      operation: options.operationDescriptor
+    }
+  }
+
+  const operationName = resolveOperationName(schema, options)
+  return {
+    operationName,
+    operation: schema.operations[operationName]
+  }
+}
+
+function resolveObjectFieldMode (fieldName, definition) {
+  const hasNestedSchema = Object.hasOwn(definition, 'schema')
+  const hasAdditionalProperties = Object.hasOwn(definition, 'additionalProperties')
+
+  if (hasNestedSchema && definition.additionalProperties === true) {
+    throw new Error(`Object field "${fieldName}" cannot define both schema and additionalProperties: true.`)
+  }
+
+  if (hasAdditionalProperties && definition.additionalProperties !== true) {
+    throw new Error(`Object field "${fieldName}" only supports additionalProperties: true.`)
+  }
+
+  if (hasNestedSchema) {
+    if (!isSchemaInstance(definition.schema)) {
+      throw new Error(`Object field "${fieldName}" must define schema as a Schema instance.`)
+    }
+
+    return { kind: 'nested', schema: definition.schema }
+  }
+
+  if (definition.additionalProperties === true) {
+    return { kind: 'opaque' }
+  }
+
+  return { kind: 'plain' }
+}
+
+function resolveArrayItemsConfig (fieldName, definition) {
+  if (!Object.hasOwn(definition, 'items')) return null
+
+  const { items } = definition
+
+  if (isSchemaInstance(items)) {
+    return { kind: 'schema', schema: items }
+  }
+
+  if (!isPlainObject(items) || typeof items.type !== 'string') {
+    throw new Error(`Array field "${fieldName}" must define items as either a Schema instance or a field definition object.`)
+  }
+
+  return { kind: 'definition', definition: items }
+}
+
+function buildSchemaObjectFragment (schema, options, operationName, operation, additionalProperties = false) {
+  const properties = {}
+  const required = []
+
+  for (const [fieldName, definition] of Object.entries(schema.structure)) {
+    properties[fieldName] = buildFieldSchema(schema, fieldName, definition, options, operationName, operation)
+    if (operation.enforceRequired && definition.required === true) {
+      required.push(fieldName)
+    }
+  }
+
+  const objectSchema = {
+    type: 'object',
+    properties,
+    additionalProperties
+  }
+
+  if (required.length > 0) {
+    objectSchema.required = required
+  }
+
+  return objectSchema
+}
+
+function buildArrayItemsSchema (schema, fieldName, definition, options, operationName, operation) {
+  const itemsConfig = resolveArrayItemsConfig(fieldName, definition)
+  if (!itemsConfig) return null
+
+  if (itemsConfig.kind === 'schema') {
+    return {
+      ...buildSchemaObjectFragment(
+        itemsConfig.schema,
+        options,
+        'replace',
+        itemsConfig.schema.operations.replace
+      ),
+      [JSON_REST_EXTENSION_KEY]: { castType: 'object' }
+    }
+  }
+
+  const itemOperationName = (
+    definition.items.type === 'object' && Object.hasOwn(definition.items, 'schema')
+  )
+    ? 'replace'
+    : operationName
+
+  const itemOperation = itemOperationName === 'replace'
+    ? schema.operations.replace
+    : operation
+
+  return buildFieldSchema(schema, `${fieldName}[]`, definition.items, options, itemOperationName, itemOperation)
+}
+
+function buildBaseFieldSchema (schema, fieldName, definition, options, operationName, operation) {
+  if (definition.type === 'object') {
+    const objectMode = resolveObjectFieldMode(fieldName, definition)
+
+    if (objectMode.kind === 'nested') {
+      return buildSchemaObjectFragment(objectMode.schema, options, operationName, operation)
+    }
+
+    if (objectMode.kind === 'opaque') {
+      return {
+        type: 'object',
+        additionalProperties: true
+      }
+    }
+  }
+
+  const baseSchema = getTypeExporter(schema, definition)({
     schema,
     fieldName,
     definition,
-    mode,
+    operation: operationName,
+    mode: operationName,
     options
-  }
+  })
 
-  const baseSchema = getTypeExporter(schema, definition)(exportContext)
   if (!baseSchema || typeof baseSchema !== 'object' || Array.isArray(baseSchema)) {
     throw new Error(`Type '${definition.type}' on field '${fieldName}' returned an invalid JSON Schema fragment.`)
   }
 
-  const workingSchema = { ...baseSchema }
+  if (definition.type === 'array') {
+    const itemsSchema = buildArrayItemsSchema(schema, fieldName, definition, options, operationName, operation)
+    if (itemsSchema) {
+      return {
+        ...baseSchema,
+        items: itemsSchema
+      }
+    }
+  }
+
+  return baseSchema
+}
+
+function buildFieldSchema (schema, fieldName, definition, options, operationName, operation) {
+  const exportContext = {
+    schema,
+    fieldName,
+    definition,
+    operation: operationName,
+    mode: operationName,
+    options
+  }
+
+  const workingSchema = {
+    ...buildBaseFieldSchema(schema, fieldName, definition, options, operationName, operation)
+  }
   const extensionMetadata = { castType: definition.type }
 
   for (const parameterName of Object.keys(definition)) {
@@ -226,7 +409,7 @@ function buildFieldSchema (schema, fieldName, definition, options) {
 
   const finalSchema = buildAnyOfSchema(workingSchema, alternatives)
 
-  if (definition.defaultTo !== undefined && mode !== 'patch') {
+  if (definition.defaultTo !== undefined && operation.applyDefaults) {
     if (typeof definition.defaultTo !== 'function') {
       finalSchema.default = definition.defaultTo
     } else {
@@ -239,29 +422,11 @@ function buildFieldSchema (schema, fieldName, definition, options) {
 }
 
 export function buildJsonSchema (schema, options = {}) {
-  const mode = normalizeMode(options.mode)
+  const { operationName, operation } = resolveExportOperation(schema, options)
   const additionalProperties = options.additionalProperties === undefined ? false : options.additionalProperties
 
-  const properties = {}
-  const required = []
-
-  for (const [fieldName, definition] of Object.entries(schema.structure)) {
-    properties[fieldName] = buildFieldSchema(schema, fieldName, definition, { ...options, mode })
-    if (mode !== 'patch' && definition.required === true) {
-      required.push(fieldName)
-    }
-  }
-
-  const jsonSchema = {
+  return {
     $schema: JSON_SCHEMA_DRAFT_07,
-    type: 'object',
-    properties,
-    additionalProperties
+    ...buildSchemaObjectFragment(schema, options, operationName, operation, additionalProperties)
   }
-
-  if (required.length > 0) {
-    jsonSchema.required = required
-  }
-
-  return jsonSchema
 }

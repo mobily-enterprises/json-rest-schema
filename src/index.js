@@ -59,9 +59,15 @@ export function use (plugin) {
  * The main factory function for creating new schema instances.
  * Each created schema will use the currently registered global types and validators.
  * @param {object} structure - The schema definition object.
+ * @param {{operations?: object}} [options={}] - Per-schema configuration options.
  * @returns {import('./Schema').Schema} A new schema instance.
  */
-const createSchema = (structure) => new Schema(structure, globalTypes, globalValidators)
+const createSchema = (structure, options = {}) => new Schema(
+  structure,
+  globalTypes,
+  globalValidators,
+  options.operations
+)
 
 // Attach the registration methods directly to the factory function for convenience.
 // This maintains the existing public API from the original code.

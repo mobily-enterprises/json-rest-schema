@@ -1,6 +1,6 @@
-# ONBOARDING.md - Understanding the `jsonrestapi-schema` Library Architecture
+# ONBOARDING.md - Understanding the `json-rest-schema` Library Architecture
 
-Welcome to the `jsonrestapi-schema` project! This document aims to demystify the library's internal structure and design philosophy. If you're looking to contribute, extend its functionality, or simply understand how it works under the hood, you're in the right place.
+Welcome to the `json-rest-schema` project! This document aims to demystify the library's internal structure and design philosophy. If you're looking to contribute, extend its functionality, or simply understand how it works under the hood, you're in the right place.
 
 ---
 
@@ -44,9 +44,9 @@ This file is the true heart and soul of the library. It acts as the central coor
     * The `use` function passes a simple API object to the plugin's `install` method: `{ addType, addValidator }`. This means the plugin only receives the specific functions it needs to register its handlers, without having to know or interact with any other internal structures. It's clean, minimal, and promotes loose coupling.
 
 * **The Schema Factory (`createSchema`):**
-    * The `const createSchema = (structure) => new Schema(structure, globalTypes, globalValidators);` function is the primary way users will interact with the library to define a new schema.
+    * The `createSchema(structure, options)` factory function is the primary way users will interact with the library to define a new schema.
     * When you call `createSchema({ /* your schema definition */ })`, it doesn't return some intermediary manager. Instead, it directly instantiates a new `Schema` object (from `./src/Schema.js`).
-    * **Crucially, it passes the *current references* to our `globalTypes` and `globalValidators` objects to the new `Schema` instance's constructor.** This means every `Schema` object created will automatically be "aware" of all the types and validators that have been registered globally up to that point.
+    * **Crucially, it passes the *current references* to our `globalTypes` and `globalValidators` objects to the new `Schema` instance's constructor**, along with any per-schema operation descriptors. This means every `Schema` object created will automatically be "aware" of all the types and validators that have been registered globally up to that point.
 
 * **The Public API (`createSchema.addType`, `createSchema.addValidator`, `createSchema.use`):**
     * For user convenience and to maintain a familiar API shape (if you've seen similar libraries), we attach the globally exported `addType`, `addValidator`, and `use` functions as properties directly onto the `createSchema` function itself:
@@ -55,11 +55,11 @@ This file is the true heart and soul of the library. It acts as the central coor
         createSchema.addValidator = addValidator;
         createSchema.use = use;
         ```
-    * This allows consumers of the library to import just one thing (`import createSchema from 'jsonrestapi-schema';`) and then access all core functionalities through it: `createSchema(...)`, `createSchema.addType(...)`, `createSchema.use(...)`.
+    * This allows consumers of the library to import just one thing (`import { createSchema } from 'json-rest-schema';`) and then access all core functionalities through it: `createSchema(...)`, `createSchema.addType(...)`, `createSchema.use(...)`.
 
 * **Automatic Core Plugin Installation:**
     * Right before the final export, `index.js` explicitly calls `createSchema.use(CorePlugin);`.
-    * This ensures that as soon as your application imports `jsonrestapi-schema`, all the built-in types (like `string`, `number`, `boolean`) and validators (like `min`, `max`, `required`) are automatically registered and ready for use. No extra setup step is required for basic functionality.
+    * This ensures that as soon as your application imports `json-rest-schema`, all the built-in types (like `string`, `number`, `boolean`) and validators (like `min`, `max`, `required`) are automatically registered and ready for use. No extra setup step is required for basic functionality.
 
 ### 2.2. `./src/Schema.js` - The Validation Workhorse
 
@@ -68,12 +68,29 @@ While `index.js` manages the global registries, the `Schema` class is where the 
 **Key Features of `Schema.js`:**
 
 * **Self-Contained Validation Logic:** Each instance of `Schema` represents a single, defined data structure. It contains the logic to traverse an input object, apply type casting, and run validation rules against its own `structure`.
-* **Dependency Injection in Constructor:** Unlike the previous design, the `Schema` constructor (`constructor(structure, types, validators)`) now explicitly receives the `types` and `validators` registries it needs from the `createSchema` factory function. This makes its dependencies clear and improves its testability.
+* **Dependency Injection in Constructor:** Unlike the previous design, the `Schema` constructor (`constructor(structure, types, validators, operations)`) now explicitly receives the `types`, `validators`, and per-schema `operations` it needs from the `createSchema` factory function. This makes its dependencies clear and improves its testability.
+* **Operation Registry:** `create`, `replace`, and `patch` are default operation descriptors stored in an internal registry. Additional operations can be declared per schema, and the `Schema` instance automatically installs method aliases for them. Operation descriptors currently support `targetFields`, `enforceRequired`, `applyDefaults`, `outputFields`, and `rejectExplicitUndefined`.
+* **Recursive Contract Support:** Nested object contracts are expressed with `type: 'object'` plus `schema`, nested array items are expressed with `type: 'array'` plus `items`, and opaque object bags are expressed with `type: 'object'` plus `additionalProperties: true`. This is intentionally much narrower than general JSON Schema.
 * **`_validateField` Method:** This private method is the granular core of the validation. For each field in your schema, it synchronously orchestrates:
     1.  **Pre-checks:** Handling `required` rules, skipping fields, and dealing with `null` or empty values based on options.
     2.  **Type Casting:** It looks up the appropriate type handler from its received `this.types` registry and attempts to transform the field's value.
     3.  **Parameter Validation:** It then iterates through any validation parameters defined for the field (e.g., `min`, `max`, `validator`), looks up their respective handlers in `this.validators`, and applies them.
-* **Operation Methods (`create`, `replace`, `patch`):** These public synchronous methods orchestrate validation for a whole object. They identify allowed/disallowed fields, validate fields in a plain loop, collect all errors, and apply any `defaultTo` values required by the active operation contract.
+* **Recursive Validation Helpers:** After a field is cast, the `Schema` instance can recursively validate nested child schemas or array items. Nested object fields inherit the active operation contract, while array items that are object schemas are validated in `replace` mode. Errors are flattened into dotted paths such as `workspace.slug` and `roles.2.id`.
+* **Operation Methods (`create`, `replace`, `patch`, and custom aliases):** These public synchronous methods are generated from the operation registry and orchestrate validation for a whole object. They identify allowed/disallowed fields, validate fields in a plain loop, collect all errors, and apply any `defaultTo` values required by the active operation contract. Names that already exist on `Schema` are reserved, so aliases such as `validateWith`, `toJsonSchema`, or `cleanup` are rejected.
+* **`validateWith(operationName, object, options)` Method:** This is the canonical operation entry point. Generated aliases such as `create()` or `upsert()` simply delegate to it.
+
+**A concrete mental model for nested validation:**
+
+1. A top-level operation such as `create()` or `patch()` decides which fields are in scope.
+2. Each field is cast by its type handler.
+3. If the field is:
+   * a nested object contract, the child schema is validated recursively with the parent operation
+   * an array with `items`, each item is validated recursively
+   * an object bag with `additionalProperties: true`, recursion stops and the value passes through
+4. Validator parameters run after casting and recursive normalization.
+5. Any child errors are flattened back into the parent error map using dotted paths.
+
+That sequencing is important. It means callers always see one flat `{ validatedObject, errors }` result even though the implementation is recursive.
 
 ### 2.3. `./src/CorePlugin.js` - The Default Toolbox
 
@@ -83,5 +100,26 @@ This file simply defines all the standard, built-in type and validator handlers 
 
 * **The `install` Method:** This is the critical part. As discussed, its `install` method is designed to receive the `addType` and `addValidator` functions. It then calls these functions multiple times, registering all the core functionalities like `string`, `number`, `boolean` types, and `min`, `max`, `notEmpty` validators.
 * **Clear Definition of Default Handlers:** It provides well-defined synchronous functions for common data transformations and validation checks, serving as excellent examples for how to write your own custom types and validators.
+* **Strict Object Ownership:** The built-in `object` type now validates that the incoming value is actually a plain object. That matters because nested contracts and opaque bags both depend on object-ness being explicit instead of being a loose pass-through.
+
+### 2.4. `./src/transport-schema.js` - Transport Export
+
+This module turns a `Schema` instance into a draft-07 JSON Schema document for transport-layer adapters.
+
+**Key Features of `transport-schema.js`:**
+
+* **Operation-aware export:** The same operation descriptors used at runtime control `required` fields and exported defaults.
+* **Recursive export:** Nested object contracts and array item contracts are exported recursively from the same schema definitions.
+* **Intentional restraint:** The exporter supports nested objects, nested arrays, and opaque object bags, but it does not grow into a general-purpose JSON Schema authoring layer. That line keeps the library readable and keeps runtime behavior aligned with export behavior.
+
+**Why the nested scope stays small:**
+
+We support only three nested shapes because they cover most real shared REST contracts without creating a second generic schema language inside the library:
+
+* `type: 'object'` plus `schema`
+* `type: 'array'` plus `items`
+* `type: 'object'` plus `additionalProperties: true`
+
+We intentionally do **not** support arbitrary embedded JSON Schema, `oneOf` / `anyOf`, recursive refs, or mixed known-field-plus-arbitrary-rest object semantics. That restraint is what keeps both the runtime and the docs understandable for a junior developer reading the code for the first time.
 
 ---

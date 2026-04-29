@@ -1,11 +1,11 @@
 /**
- * @file examples.js
+ * @file example.js
  * A comprehensive demonstration of all built-in validation types and rules.
  *
  * To Run:
  * 1. Ensure you have the full project structure (src/, package.json).
  * 2. Run `npm install` to get dependencies.
- * 3. Run `node examples.js` in your terminal.
+ * 3. Run `node example.js` in your terminal.
  */
 
 import { createSchema } from './src/index.js'
@@ -76,8 +76,8 @@ const validInput = {
   userId: '12345', // Will be cast to number
   isActive: 'on', // Will be cast to boolean true
   hasAgreed: true,
-  birthDate: '1980-05-15T12:00:00Z', // Will be cast to 'YYYY-MM-DD'
-  lastLogin: Date.now(), // Will be cast to 'YYYY-MM-DD HH:MM:SS'
+  birthDate: '1980-05-15T12:00:00Z', // Will be cast to a Date normalized to UTC midnight
+  lastLogin: Date.now(), // Will be cast to a Date object
   tags: 'single-tag', // Will be cast to an array: ['single-tag']
   requiredComment: 'This is a valid comment.',
   // 'optionalComment' is missing, which is valid
@@ -95,6 +95,56 @@ const transportSchemaExample = createSchema({
   status: { type: 'string', enum: ['draft', 'published'] },
   nickname: { type: 'string', nullOnEmpty: true },
   publishedAt: { type: 'dateTime', temporalPrecision: 3 }
+}, {
+  operations: {
+    upsert: {
+      targetFields: 'schema',
+      enforceRequired: false,
+      applyDefaults: true,
+      outputFields: 'validated'
+    }
+  }
+})
+
+const workspaceSummarySchema = createSchema({
+  id: { type: 'id', required: true },
+  slug: { type: 'string', required: true, minLength: 3 },
+  ownerUserId: { type: 'id', required: true }
+})
+
+const workspaceSettingsSchema = createSchema({
+  invitesEnabled: { type: 'boolean', required: true }
+})
+
+const roleSchema = createSchema({
+  id: { type: 'string', required: true },
+  label: { type: 'string', required: true }
+})
+
+const nestedContractExample = createSchema({
+  workspace: {
+    type: 'object',
+    required: true,
+    schema: workspaceSummarySchema
+  },
+  settings: {
+    type: 'object',
+    required: true,
+    schema: workspaceSettingsSchema
+  },
+  roles: {
+    type: 'array',
+    required: true,
+    items: roleSchema
+  },
+  assignableRoleIds: {
+    type: 'array',
+    items: { type: 'string', minLength: 1 }
+  },
+  metadata: {
+    type: 'object',
+    additionalProperties: true
+  }
 })
 
 // --- Main Execution ---
@@ -136,13 +186,67 @@ function runComprehensiveExample () {
   console.log('Age cast to number:', validResult.age)
   console.log('\'isActive\' cast from "on" to boolean:', validResult.isActive)
   console.log('\'tags\' cast from string to array:', validResult.tags)
+  console.log('Birth date is a Date object:', validResult.birthDate instanceof Date)
+  console.log('Last login is a Date object:', validResult.lastLogin instanceof Date)
   console.log('Serialized metadata is a string:', typeof validResult.metadata === 'string')
   const restored = flatted.parse(validResult.metadata)
   console.log('Circular reference in restored metadata is intact:', restored.self === restored)
 
-  console.log('\n--- 3. Transport JSON Schema Export ---')
+  console.log('\n--- 3. Custom Operation Example ---')
+  console.log('Upsert result:', transportSchemaExample.upsert({ status: 'draft' }))
+
+  console.log('\n--- 4. Nested Contract Example ---')
+  const nestedInput = {
+    workspace: {
+      id: '42',
+      slug: '  main-workspace  ',
+      ownerUserId: '7'
+    },
+    settings: {
+      invitesEnabled: 'yes'
+    },
+    roles: [
+      { id: 'admin', label: '  Admin  ' },
+      { id: 'member', label: 'Member' }
+    ],
+    assignableRoleIds: [' admin ', 'member'],
+    metadata: {
+      theme: 'dark',
+      betaFlags: {
+        collaboration: true
+      }
+    }
+  }
+
+  const nestedResult = nestedContractExample.create(nestedInput)
+  console.log('Nested create result:', nestedResult)
+  console.log('Nested patch result:', nestedContractExample.patch({
+    workspace: {
+      slug: '  sandbox  '
+    }
+  }))
+
+  console.log('\nNested invalid result with dotted-path errors:', nestedContractExample.create({
+    workspace: {
+      id: '42',
+      slug: 'ok',
+      extra: true
+    },
+    settings: {},
+    roles: [
+      { id: 'admin' }
+    ],
+    assignableRoleIds: ['owner', '   '],
+    metadata: {
+      theme: 'dark'
+    }
+  }))
+
+  console.log('\n--- 5. Transport JSON Schema Export ---')
   console.log('Create schema export:', JSON.stringify(transportSchemaExample.toJsonSchema(), null, 2))
-  console.log('Patch schema export:', JSON.stringify(transportSchemaExample.toJsonSchema({ mode: 'patch' }), null, 2))
+  console.log('Patch schema export:', JSON.stringify(transportSchemaExample.toJsonSchema({ operation: 'patch' }), null, 2))
+  console.log('Upsert schema export:', JSON.stringify(transportSchemaExample.toJsonSchema({ operation: 'upsert' }), null, 2))
+  console.log('Nested schema export:', JSON.stringify(nestedContractExample.toJsonSchema(), null, 2))
 }
 
 runComprehensiveExample()

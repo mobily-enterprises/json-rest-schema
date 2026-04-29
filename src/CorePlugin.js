@@ -201,7 +201,13 @@ const CorePlugin = {
       }
       return context.value
     })
-    addType('object', context => context.value)
+    addType('object', context => {
+      if (context.value === null || typeof context.value !== 'object' || Array.isArray(context.value)) {
+        context.throwTypeError()
+      }
+
+      return context.value
+    })
     addType('serialize', context => {
       try {
         // First try regular JSON.stringify for non-circular objects

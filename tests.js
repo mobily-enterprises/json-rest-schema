@@ -66,6 +66,52 @@ describe('1. Core API (`createSchema`)', () => {
     const badPlugin = {}
     assert.throws(() => createSchema.use(badPlugin), /Plugin must have an install method/)
   })
+
+  it('should install built-in and custom operation methods automatically', () => {
+    const schema = createSchema({
+      name: { type: 'string', required: true },
+      role: { type: 'string', defaultTo: 'guest' }
+    }, {
+      operations: {
+        upsert: {
+          targetFields: 'schema',
+          enforceRequired: false,
+          applyDefaults: true,
+          outputFields: 'validated'
+        }
+      }
+    })
+
+    assert.strictEqual(typeof schema.create, 'function')
+    assert.strictEqual(typeof schema.replace, 'function')
+    assert.strictEqual(typeof schema.patch, 'function')
+    assert.strictEqual(typeof schema.upsert, 'function')
+
+    const aliasResult = schema.upsert({})
+    const canonicalResult = schema.validateWith('upsert', {})
+
+    assert.deepStrictEqual(aliasResult, canonicalResult)
+    assert.deepStrictEqual(aliasResult, {
+      validatedObject: { role: 'guest' },
+      errors: {}
+    })
+  })
+
+  it('should reject reserved names for generated operation methods', () => {
+    assert.throws(
+      () => createSchema({}, {
+        operations: {
+          toJsonSchema: {
+            targetFields: 'schema',
+            enforceRequired: true,
+            applyDefaults: true,
+            outputFields: 'validated'
+          }
+        }
+      }),
+      /Operation name "toJsonSchema" is reserved and cannot be used as a schema method\./
+    )
+  })
 })
 
 describe('2. Core Validation Logic (`Schema.js`)', () => {
@@ -202,6 +248,254 @@ describe('2. Core Validation Logic (`Schema.js`)', () => {
       const { errors } = schema.patch({ name: undefined })
       assertError(errors, 'name', 'TYPE_CAST_FAILED')
     })
+
+    it('built-in operations should be overrideable via the operation registry', () => {
+      const customSchema = createSchema({
+        name: { type: 'string', required: true },
+        role: { type: 'string', defaultTo: 'guest' }
+      }, {
+        operations: {
+          create: {
+            targetFields: 'schema',
+            enforceRequired: false,
+            applyDefaults: true,
+            outputFields: 'validated'
+          }
+        }
+      })
+
+      const { validatedObject, errors } = customSchema.create({})
+      assert.deepStrictEqual(errors, {})
+      assert.deepStrictEqual(validatedObject, {
+        role: 'guest'
+      })
+    })
+
+    it('validateWith should reject unknown operation names', () => {
+      assert.throws(
+        () => schema.validateWith('publish', {}),
+        /Unknown operation "publish"\./
+      )
+    })
+  })
+
+  describe('Nested Contracts', () => {
+    const workspaceSummarySchema = createSchema({
+      id: { type: 'id', required: true },
+      slug: { type: 'string', required: true, minLength: 3 },
+      ownerUserId: { type: 'id', required: true }
+    })
+
+    const workspaceSettingsSchema = createSchema({
+      invitesEnabled: { type: 'boolean', required: true }
+    })
+
+    const roleSchema = createSchema({
+      id: { type: 'string', required: true },
+      label: { type: 'string', required: true, minLength: 2 }
+    })
+
+    it('should validate nested object fields recursively and prefix child error paths', () => {
+      const schema = createSchema({
+        workspace: { type: 'object', required: true, schema: workspaceSummarySchema },
+        settings: { type: 'object', required: true, schema: workspaceSettingsSchema }
+      })
+
+      const { validatedObject, errors } = schema.create({
+        workspace: {
+          id: '42',
+          slug: '  main-workspace  ',
+          extra: true
+        },
+        settings: {}
+      })
+
+      assert.strictEqual(validatedObject.workspace.id, 42)
+      assert.strictEqual(validatedObject.workspace.slug, 'main-workspace')
+      assert.deepStrictEqual(validatedObject.settings, {})
+
+      assertError(errors, 'workspace.ownerUserId', 'REQUIRED')
+      assertError(errors, 'workspace.extra', 'FIELD_NOT_ALLOWED')
+      assertError(errors, 'settings.invitesEnabled', 'REQUIRED')
+    })
+
+    it('should inherit patch semantics inside nested object fields', () => {
+      const schema = createSchema({
+        workspace: { type: 'object', required: true, schema: workspaceSummarySchema }
+      })
+
+      const { validatedObject, errors } = schema.patch({
+        workspace: {
+          slug: '  next  '
+        }
+      })
+
+      assert.deepStrictEqual(errors, {})
+      assert.deepStrictEqual(validatedObject, {
+        workspace: {
+          slug: 'next'
+        }
+      })
+    })
+
+    it('should inherit custom operation descriptors inside nested object fields even when the child schema does not declare that operation', () => {
+      const schema = createSchema({
+        workspace: { type: 'object', required: true, schema: workspaceSummarySchema },
+        status: { type: 'string', defaultTo: 'draft' }
+      }, {
+        operations: {
+          upsert: {
+            targetFields: 'schema',
+            enforceRequired: false,
+            applyDefaults: true,
+            outputFields: 'validated'
+          }
+        }
+      })
+
+      const { validatedObject, errors } = schema.upsert({
+        workspace: {
+          slug: '  sandbox  '
+        }
+      })
+
+      assert.deepStrictEqual(errors, {})
+      assert.deepStrictEqual(validatedObject, {
+        workspace: {
+          slug: 'sandbox'
+        },
+        status: 'draft'
+      })
+    })
+
+    it('should validate array items with nested object schemas using replace semantics', () => {
+      const schema = createSchema({
+        roles: { type: 'array', required: true, items: roleSchema }
+      })
+
+      const { validatedObject, errors } = schema.patch({
+        roles: [
+          { id: 'admin' },
+          { id: 'editor', label: '  Editor  ' }
+        ]
+      })
+
+      assert.deepStrictEqual(validatedObject, {
+        roles: [
+          { id: 'admin' },
+          { id: 'editor', label: 'Editor' }
+        ]
+      })
+
+      assertError(errors, 'roles.0.label', 'REQUIRED')
+    })
+
+    it('should validate primitive array items recursively and keep stable item paths', () => {
+      const schema = createSchema({
+        assignableRoleIds: {
+          type: 'array',
+          required: true,
+          items: { type: 'string', minLength: 1 }
+        }
+      })
+
+      const { validatedObject, errors } = schema.create({
+        assignableRoleIds: ['  owner  ', '   ', 123]
+      })
+
+      assert.deepStrictEqual(validatedObject, {
+        assignableRoleIds: ['owner', '', '123']
+      })
+
+      assertError(errors, 'assignableRoleIds.1', 'MIN_LENGTH')
+    })
+
+    it('should support skipping nested fields and nested validator params by dotted paths', () => {
+      const schema = createSchema({
+        workspace: { type: 'object', required: true, schema: workspaceSummarySchema }
+      })
+
+      const skippedFieldResult = schema.patch({
+        workspace: {
+          slug: 'x'
+        }
+      }, {
+        skipFields: ['workspace.slug']
+      })
+
+      assert.deepStrictEqual(skippedFieldResult.errors, {})
+      assert.deepStrictEqual(skippedFieldResult.validatedObject, {
+        workspace: {
+          slug: 'x'
+        }
+      })
+
+      const skippedParamResult = schema.patch({
+        workspace: {
+          slug: 'x'
+        }
+      }, {
+        skipParams: {
+          'workspace.slug': ['minLength']
+        }
+      })
+
+      assert.deepStrictEqual(skippedParamResult.errors, {})
+      assert.deepStrictEqual(skippedParamResult.validatedObject, {
+        workspace: {
+          slug: 'x'
+        }
+      })
+    })
+
+    it('should preserve opaque object bags unchanged while still enforcing object type checks', () => {
+      const schema = createSchema({
+        metadata: { type: 'object', additionalProperties: true }
+      })
+
+      const input = {
+        metadata: {
+          theme: 'dark',
+          flags: {
+            beta: true
+          }
+        }
+      }
+
+      const { validatedObject, errors } = schema.patch(input)
+      assert.deepStrictEqual(errors, {})
+      assert.deepStrictEqual(validatedObject, input)
+
+      const invalid = schema.patch({ metadata: ['not-an-object'] })
+      assertError(invalid.errors, 'metadata', 'TYPE_CAST_FAILED')
+    })
+
+    it('should fail clearly for unsupported nested definition combinations', () => {
+      const schemaWithInvalidObject = createSchema({
+        metadata: {
+          type: 'object',
+          schema: createSchema({ value: { type: 'string' } }),
+          additionalProperties: true
+        }
+      })
+
+      assert.throws(
+        () => schemaWithInvalidObject.create({ metadata: {} }),
+        /Object field "metadata" cannot define both schema and additionalProperties: true\./
+      )
+
+      const schemaWithInvalidItems = createSchema({
+        roles: {
+          type: 'array',
+          items: true
+        }
+      })
+
+      assert.throws(
+        () => schemaWithInvalidItems.create({ roles: [] }),
+        /Array field "roles" must define items as either a Schema instance or a field definition object\./
+      )
+    })
   })
 
   it('`cleanup` method should work correctly', () => {
@@ -216,7 +510,7 @@ describe('2. Core Validation Logic (`Schema.js`)', () => {
 })
 
 describe('2.5. Transport JSON Schema Export', () => {
-  it('should export a mode-aware draft-07 JSON Schema for transport validation', () => {
+  it('should export an operation-aware draft-07 JSON Schema for transport validation', () => {
     const schema = createSchema({
       id: { type: 'id', required: true },
       name: { type: 'string', required: true, minLength: 3, maxLength: 10 },
@@ -307,11 +601,200 @@ describe('2.5. Transport JSON Schema Export', () => {
     assert.strictEqual(Object.hasOwn(transportSchema.properties.age, 'default'), false)
   })
 
+  it('should export custom operation contracts through the operation option', () => {
+    const schema = createSchema({
+      id: { type: 'id', required: true },
+      age: { type: 'number', defaultTo: 18 }
+    }, {
+      operations: {
+        upsert: {
+          targetFields: 'schema',
+          enforceRequired: false,
+          applyDefaults: true,
+          outputFields: 'validated'
+        }
+      }
+    })
+
+    const transportSchema = schema.toJsonSchema({ operation: 'upsert' })
+
+    assert.strictEqual(Object.hasOwn(transportSchema, 'required'), false)
+    assert.strictEqual(transportSchema.properties.age.default, 18)
+  })
+
+  it('should keep mode as compatibility sugar for built-in operations', () => {
+    const schema = createSchema({
+      id: { type: 'id', required: true },
+      age: { type: 'number', defaultTo: 18 }
+    })
+
+    assert.deepStrictEqual(
+      schema.toJsonSchema({ mode: 'patch' }),
+      schema.toJsonSchema({ operation: 'patch' })
+    )
+  })
+
+  it('should reject unknown operation names during transport export', () => {
+    const schema = createSchema({ id: { type: 'id' } })
+
+    assert.throws(
+      () => schema.toJsonSchema({ operation: 'publish' }),
+      /Unknown JSON Schema export operation 'publish'\./
+    )
+  })
+
   it('should allow additionalProperties to be configured explicitly', () => {
     const schema = createSchema({ id: { type: 'id' } })
     const transportSchema = schema.toJsonSchema({ additionalProperties: true })
 
     assert.strictEqual(transportSchema.additionalProperties, true)
+  })
+
+  it('should export nested object fields, opaque object bags, and recursive array item schemas', () => {
+    const workspaceSummarySchema = createSchema({
+      id: { type: 'id', required: true },
+      slug: { type: 'string', required: true, minLength: 3 }
+    })
+
+    const roleSchema = createSchema({
+      id: { type: 'string', required: true },
+      label: { type: 'string', required: true }
+    })
+
+    const schema = createSchema({
+      workspace: { type: 'object', required: true, schema: workspaceSummarySchema },
+      metadata: { type: 'object', additionalProperties: true },
+      roles: { type: 'array', required: true, items: roleSchema },
+      assignableRoleIds: { type: 'array', items: { type: 'string', minLength: 1 } }
+    })
+
+    const transportSchema = schema.toJsonSchema()
+
+    assert.deepStrictEqual(transportSchema.properties.workspace, {
+      type: 'object',
+      properties: {
+        id: {
+          type: ['integer', 'string'],
+          minimum: 1,
+          pattern: '^[1-9][0-9]*$',
+          'x-json-rest-schema': { castType: 'id' }
+        },
+        slug: {
+          type: 'string',
+          minLength: 3,
+          'x-json-rest-schema': { castType: 'string' }
+        }
+      },
+      additionalProperties: false,
+      required: ['id', 'slug'],
+      'x-json-rest-schema': { castType: 'object' }
+    })
+
+    assert.deepStrictEqual(transportSchema.properties.metadata, {
+      type: 'object',
+      additionalProperties: true,
+      'x-json-rest-schema': { castType: 'object' }
+    })
+
+    assert.deepStrictEqual(transportSchema.properties.roles, {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          id: {
+            type: 'string',
+            'x-json-rest-schema': { castType: 'string' }
+          },
+          label: {
+            type: 'string',
+            'x-json-rest-schema': { castType: 'string' }
+          }
+        },
+        additionalProperties: false,
+        required: ['id', 'label'],
+        'x-json-rest-schema': { castType: 'object' }
+      },
+      'x-json-rest-schema': { castType: 'array' }
+    })
+
+    assert.deepStrictEqual(transportSchema.properties.assignableRoleIds, {
+      type: 'array',
+      items: {
+        type: 'string',
+        minLength: 1,
+        'x-json-rest-schema': { castType: 'string' }
+      },
+      'x-json-rest-schema': { castType: 'array' }
+    })
+  })
+
+  it('should inherit patch semantics inside nested object transport schemas', () => {
+    const workspaceSummarySchema = createSchema({
+      id: { type: 'id', required: true },
+      slug: { type: 'string', required: true }
+    })
+
+    const schema = createSchema({
+      workspace: { type: 'object', required: true, schema: workspaceSummarySchema }
+    })
+
+    const patchTransportSchema = schema.toJsonSchema({ operation: 'patch' })
+
+    assert.strictEqual(Object.hasOwn(patchTransportSchema.properties.workspace, 'required'), false)
+  })
+
+  it('should export array item object schemas in replace mode even when the parent export uses patch mode', () => {
+    const roleSchema = createSchema({
+      id: { type: 'string', required: true },
+      label: { type: 'string', required: true }
+    })
+
+    const schema = createSchema({
+      roles: { type: 'array', items: roleSchema }
+    })
+
+    const patchTransportSchema = schema.toJsonSchema({ operation: 'patch' })
+
+    assert.deepStrictEqual(patchTransportSchema.properties.roles.items.required, ['id', 'label'])
+  })
+
+  it('should export nested child schemas with inherited custom operations even when the child schema does not declare them', () => {
+    const childSchema = createSchema({
+      slug: { type: 'string', required: true },
+      title: { type: 'string', defaultTo: 'Untitled' }
+    })
+
+    const schema = createSchema({
+      workspace: { type: 'object', schema: childSchema }
+    }, {
+      operations: {
+        upsert: {
+          targetFields: 'schema',
+          enforceRequired: false,
+          applyDefaults: true,
+          outputFields: 'validated'
+        }
+      }
+    })
+
+    const transportSchema = schema.toJsonSchema({ operation: 'upsert' })
+
+    assert.strictEqual(Object.hasOwn(transportSchema.properties.workspace, 'required'), false)
+    assert.strictEqual(transportSchema.properties.workspace.properties.title.default, 'Untitled')
+  })
+
+  it('should fail clearly for unsupported nested transport export definitions', () => {
+    const schema = createSchema({
+      metadata: {
+        type: 'object',
+        additionalProperties: false
+      }
+    })
+
+    assert.throws(
+      () => schema.toJsonSchema(),
+      /Object field "metadata" only supports additionalProperties: true\./
+    )
   })
 
   it('should preserve built-in transforms and passive schema metadata as extension metadata', () => {
@@ -490,6 +973,11 @@ describe('3. Core Plugin: Type Handlers', () => {
     // Array
     { type: 'array', input: { field: 'one' }, expected: ['one'] },
     { type: 'array', input: { field: ['one', 'two'] }, expected: ['one', 'two'] },
+
+    // Object
+    { type: 'object', input: { field: { nested: true } }, expected: { nested: true } },
+    { type: 'object', input: { field: 'not-an-object' }, error: 'TYPE_CAST_FAILED' },
+    { type: 'object', input: { field: ['nope'] }, error: 'TYPE_CAST_FAILED' },
 
     // Boolean
     { type: 'boolean', input: { field: 'true' }, expected: true },

@@ -2,6 +2,10 @@
 
 Welcome! This tutorial will walk you through everything you need to know to use the schema validation library effectively. We'll start with the basics and progressively move to more advanced topics like creating your own custom rules.
 
+Published documentation:
+
+<https://mobily-enterprises.github.io/json-rest-schema/>
+
 ## Shared Contract Boundary
 
 `json-rest-schema` is intentionally **synchronous**. Shared schemas need to run the same way on the client and the server, so this library is scoped to:
@@ -16,6 +20,10 @@ It is **not** the place for database-backed uniqueness checks, external API look
 ## Documentation
 
 This repo now ships a VitePress documentation site that renders this `README.md` as the main documentation page.
+
+Published docs:
+
+<https://mobily-enterprises.github.io/json-rest-schema/>
 
 Run it locally with:
 

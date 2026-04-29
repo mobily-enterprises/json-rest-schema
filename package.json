@@ -15,13 +15,13 @@
   ],
   "author": "Tony Mobily",
   "license": "GPL-3.0-only",
-  "homepage": "https://mobily-enterprises.github.io/jsonrestapi-schema/",
+  "homepage": "https://mobily-enterprises.github.io/json-rest-schema/",
   "repository": {
     "type": "git",
-    "url": "git+https://mobily-enterprises/jsonrestapi-schema.git"
+    "url": "git+https://mobily-enterprises/json-rest-schema.git"
   },
   "bugs": {
-    "url": "https://mobily-enterprises/jsonrestapi-schema/issues"
+    "url": "https://github.com/mobily-enterprises/json-rest-schema/issues"
   },
   "type": "module",
   "main": "src/index.js",

@@ -1,4 +1,6 @@
-const repositoryName = process.env.GITHUB_REPOSITORY?.split('/')[1] ?? 'jsonrestapi-schema'
+import { readmeSidebar } from './generated-readme-nav.mjs'
+
+const repositoryName = process.env.GITHUB_REPOSITORY?.split('/')[1] ?? 'json-rest-schema'
 const docsBase = process.env.DOCS_BASE ?? (process.env.GITHUB_ACTIONS === 'true' ? `/${repositoryName}/` : '/')
 
 /** @type {import('vitepress').UserConfig} */
@@ -13,11 +15,15 @@ export default {
       { text: 'README', link: '/' },
       { text: 'Demo Apps', link: '/demos' },
       { text: 'Contributor Notes', link: '/onboarding' },
-      { text: 'GitHub', link: 'https://github.com/mobily-enterprises/jsonrestapi-schema' }
+      { text: 'GitHub', link: 'https://github.com/mobily-enterprises/json-rest-schema' }
     ],
     sidebar: [
       {
-        text: 'Documentation',
+        text: 'README Sections',
+        items: readmeSidebar
+      },
+      {
+        text: 'Other Docs',
         items: [
           { text: 'README', link: '/' },
           { text: 'Demo Apps', link: '/demos' },
@@ -26,7 +32,7 @@ export default {
       }
     ],
     socialLinks: [
-      { icon: 'github', link: 'https://github.com/mobily-enterprises/jsonrestapi-schema' }
+      { icon: 'github', link: 'https://github.com/mobily-enterprises/json-rest-schema' }
     ],
     search: {
       provider: 'local'

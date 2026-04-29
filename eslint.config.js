@@ -5,6 +5,9 @@ export default [
     ignores: [
       'node_modules/**',
       'demos/**',
+      'docs/.vitepress/dist/**',
+      'docs/.vitepress/generated-readme-nav.mjs',
+      'docs/generated/**',
       'playwright-report/**',
       'test-results/**',
       'example.js'

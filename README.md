@@ -2,6 +2,17 @@
 
 Welcome! This tutorial will walk you through everything you need to know to use the schema validation library effectively. We'll start with the basics and progressively move to more advanced topics like creating your own custom rules.
 
+## Shared Contract Boundary
+
+`json-rest-schema` is intentionally **synchronous**. Shared schemas need to run the same way on the client and the server, so this library is scoped to:
+
+* typing and casting
+* normalization
+* local field validation
+* local cross-field validation
+
+It is **not** the place for database-backed uniqueness checks, external API lookups, or any other stateful async business rule. Put those checks in higher layers such as services, repositories, or actions after schema validation has produced a normalized payload.
+
 ## 1. Getting Started: Your First Schema
 
 Let's start with a common use case: validating a user registration form.
@@ -29,20 +40,16 @@ const userInput = {
   age: '25' // Note: age is a string here
 };
 
-async function validateUser() {
-  const { validatedObject, errors } = await userSchema.create(userInput);
+const { validatedObject, errors } = userSchema.create(userInput);
 
-  // Check if there were any errors by seeing if the errors object has keys
-  if (Object.keys(errors).length > 0) {
-    console.log("Validation failed!");
-    console.log(errors);
-  } else {
-    console.log("Validation successful!");
-    console.log(validatedObject);
-  }
+// Check if there were any errors by seeing if the errors object has keys
+if (Object.keys(errors).length > 0) {
+  console.log("Validation failed!");
+  console.log(errors);
+} else {
+  console.log("Validation successful!");
+  console.log(validatedObject);
 }
-
-validateUser();
 ```
 
 **What happens here?**
@@ -78,7 +85,7 @@ const invalidInput = {
   age: 16 // Fails 'min: 18'
 };
 
-const { validatedObject, errors } = await userSchema.create(invalidInput);
+const { validatedObject, errors } = userSchema.create(invalidInput);
 
 console.log(JSON.stringify(errors, null, 2));
 ```
@@ -114,12 +121,12 @@ The output would look like this:
 
 ### Operation Contracts
 
-For explicit write semantics, the schema instance now exposes three operation-specific methods:
+For explicit write semantics, the schema instance exposes three synchronous operation-specific methods:
 
 ```javascript
-await userSchema.create(input);
-await userSchema.replace(input);
-await userSchema.patch(input);
+userSchema.create(input);
+userSchema.replace(input);
+userSchema.patch(input);
 ```
 
 They all return the same `{ validatedObject, errors }` shape, but they differ in how omitted fields are treated:
@@ -197,7 +204,7 @@ Validators are rules that run after a value has been cast to its proper type.
 | `nullOnEmpty: true`| If the input value is an empty string (`''`), it will be cast to `null` before other validators run. |
 | `lowercase: true` | **Transforms** the string to all lowercase. |
 | `uppercase: true` | **Transforms** the string to all uppercase. |
-| `validator: <function>`| Allows you to provide your own custom validation function for complex, one-off logic. |
+| `validator: <function>`| Allows you to provide your own **synchronous** custom validation function for complex, one-off logic. |
 | `defaultTo: <value>` | If the field is not present in the input object, this value will be used in validation modes that apply defaults. Can be a value or a function that returns a value. |
 | `unsigned: true` | Passive schema metadata indicating non-negative numeric storage intent. Preserved in transport export metadata. |
 | `precision: <number>` | Passive schema metadata for decimal total digits. Preserved in transport export metadata. |
@@ -208,7 +215,7 @@ Validators are rules that run after a value has been cast to its proper type.
 
 ## 4. Extending the Library: Custom Rules
 
-The real power of the library comes from its extensibility. You can easily add your own reusable types and validators. When you do this, you'll be passed a powerful `context` object.
+The real power of the library comes from its extensibility. You can easily add your own reusable types and validators. They must stay synchronous so the schema remains portable across environments. When you do this, you'll be passed a powerful `context` object.
 
 ### The `context` Object
 
@@ -232,6 +239,8 @@ Every custom type and validator handler receives a `context` object as its only 
 Let's say you frequently need to validate that a field is a URL-friendly "slug" (e.g., `my-blog-post`).
 
 You can define a new validator once and use it anywhere.
+
+Custom validators must be synchronous and local. If you need to ask a database or external API something, validate the payload first and run that business rule afterward in your service layer.
 
 ```javascript
 // Do this once when your application starts
@@ -279,7 +288,7 @@ const productSchema = createSchema({
 });
 
 const product = { name: 'Laptop', tags: ' electronics, computers, tech ' };
-const { validatedObject } = await productSchema.create(product);
+const { validatedObject } = productSchema.create(product);
 
 // validatedObject.tags will be: ['electronics', 'computers', 'tech']
 console.log(validatedObject.tags);

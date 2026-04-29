@@ -12,6 +12,12 @@ import { isDeepStrictEqual } from 'node:util'
 const DEFAULT_BOOLEAN_TRUE_VALUES = new Set(['true', '1', 'yes', 'y', 'on'])
 const DEFAULT_BOOLEAN_FALSE_VALUES = new Set(['false', '0', 'no', 'n', 'off'])
 
+function isThenable (value) {
+  return value !== null &&
+    (typeof value === 'object' || typeof value === 'function') &&
+    typeof value.then === 'function'
+}
+
 function normalizeFiniteNumberInput (value) {
   if (typeof value === 'number') {
     return Number.isFinite(value) ? value : null
@@ -82,6 +88,11 @@ const CorePlugin = {
     addType('number', context => {
       const numberValue = normalizeFiniteNumberInput(context.value)
       if (numberValue === null) context.throwTypeError()
+      return numberValue
+    })
+    addType('integer', context => {
+      const numberValue = normalizeFiniteNumberInput(context.value)
+      if (numberValue === null || !Number.isInteger(numberValue)) context.throwTypeError()
       return numberValue
     })
     addType('timestamp', context => {
@@ -305,11 +316,23 @@ const CorePlugin = {
         })
       }
     })
-    addValidator('validator', async context => {
+    addValidator('strictBoolean', context => {
+      if (!context.parameterValue) return
+      if (context.definition.type !== 'boolean') {
+        throw new Error(`strictBoolean can only be used on boolean fields (${context.fieldName}).`)
+      }
+      if (typeof context.valueBeforeCast !== 'boolean') {
+        context.throwParamError('STRICT_BOOLEAN', 'Value must be a boolean.')
+      }
+    })
+    addValidator('validator', context => {
       if (typeof context.parameterValue !== 'function') {
         throw new Error(`Validator for ${context.fieldName} must be a function.`)
       }
-      const r = await context.parameterValue(context.value, context.object, context)
+      const r = context.parameterValue(context.value, context.object, context)
+      if (isThenable(r)) {
+        throw new Error(`Custom validator for "${context.fieldName}" must be synchronous.`)
+      }
       if (typeof r === 'string') {
         context.throwParamError('CUSTOM_VALIDATOR_FAILED', r)
       }

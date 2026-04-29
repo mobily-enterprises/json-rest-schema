@@ -31,6 +31,12 @@
 
 import { buildJsonSchema } from './transport-schema.js'
 
+function isThenable (value) {
+  return value !== null &&
+    (typeof value === 'object' || typeof value === 'function') &&
+    typeof value.then === 'function'
+}
+
 /**
  * Represents an instance of a schema that can validate objects against a structure.
  * This class is instantiated by the createSchema factory function.
@@ -121,9 +127,9 @@ export class Schema {
    * @param {object} validatedObject - The object being built with validated data.
    * @param {object} options - The global validation options.
    * @param {object} settings - Mode-specific validation settings.
-   * @returns {Promise<ValidationError|null>} An error object if validation fails, otherwise null.
+   * @returns {ValidationError|null} An error object if validation fails, otherwise null.
    */
-  async _validateField (fieldName, object, validatedObject, options, settings) {
+  _validateField (fieldName, object, validatedObject, options, settings) {
     const definition = this.structure[fieldName]
     if (!definition) return null
 
@@ -192,7 +198,10 @@ export class Schema {
     if (!typeHandler) throw new Error(`No casting function for type: ${definition.type}`)
 
     try {
-      const castResult = await typeHandler(context)
+      const castResult = typeHandler(context)
+      if (isThenable(castResult)) {
+        throw new Error(`Type handler for "${definition.type}" must be synchronous.`)
+      }
       if (castResult !== undefined) {
         validatedObject[fieldName] = castResult
         context.value = castResult
@@ -211,7 +220,10 @@ export class Schema {
         try {
           context.parameterName = paramName
           context.parameterValue = definition[paramName]
-          const validatorResult = await validatorHandler(context)
+          const validatorResult = validatorHandler(context)
+          if (isThenable(validatorResult)) {
+            throw new Error(`Validator handler for "${paramName}" must be synchronous.`)
+          }
           if (validatorResult !== undefined) {
             validatedObject[fieldName] = validatorResult
             context.value = validatorResult
@@ -226,12 +238,11 @@ export class Schema {
   }
 
   /** @private */
-  async _validateWithOperationMode (object, options, mode) {
+  _validateWithOperationMode (object, options, mode) {
     this._assertSupportedOptions(options)
 
     const errors = {}
     const workingObject = { ...object }
-    const validationPromises = []
     const settings = this._buildOperationSettings(mode, object)
 
     for (const fieldName in object) {
@@ -242,13 +253,7 @@ export class Schema {
 
     const targetFields = mode === 'patch' ? Object.keys(object) : Object.keys(this.structure)
     for (const fieldName of targetFields) {
-      validationPromises.push(
-        this._validateField(fieldName, object, workingObject, options, settings)
-      )
-    }
-
-    const results = await Promise.all(validationPromises)
-    for (const error of results) {
+      const error = this._validateField(fieldName, object, workingObject, options, settings)
       if (error) {
         errors[error.field] = error
       }
@@ -279,9 +284,9 @@ export class Schema {
    * Applies required checks and defaults, while leaving omitted optional fields omitted.
    * @param {object} object - The input object to validate.
    * @param {object} [options={}] - Validation options.
-   * @returns {Promise<{validatedObject: object, errors: Object.<string, ValidationError>}>}
+   * @returns {{validatedObject: object, errors: Object.<string, ValidationError>}}
    */
-  async create (object, options = {}) {
+  create (object, options = {}) {
     return this._validateWithOperationMode(object, options, 'create')
   }
 
@@ -290,9 +295,9 @@ export class Schema {
    * Applies required checks and defaults, while leaving omitted fields omitted.
    * @param {object} object - The input object to validate.
    * @param {object} [options={}] - Validation options.
-   * @returns {Promise<{validatedObject: object, errors: Object.<string, ValidationError>}>}
+   * @returns {{validatedObject: object, errors: Object.<string, ValidationError>}}
    */
-  async replace (object, options = {}) {
+  replace (object, options = {}) {
     return this._validateWithOperationMode(object, options, 'replace')
   }
 
@@ -301,9 +306,9 @@ export class Schema {
    * Only explicitly provided fields are validated and returned.
    * @param {object} object - The input object to validate.
    * @param {object} [options={}] - Validation options.
-   * @returns {Promise<{validatedObject: object, errors: Object.<string, ValidationError>}>}
+   * @returns {{validatedObject: object, errors: Object.<string, ValidationError>}}
    */
-  async patch (object, options = {}) {
+  patch (object, options = {}) {
     return this._validateWithOperationMode(object, options, 'patch')
   }
 

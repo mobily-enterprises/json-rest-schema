@@ -99,14 +99,15 @@ const transportSchemaExample = createSchema({
 
 // --- Main Execution ---
 
-async function runComprehensiveExample () {
+function runComprehensiveExample () {
   console.log('--- COMPREHENSIVE VALIDATION EXAMPLE ---')
+  console.log('Schemas are synchronous shared contracts. Run DB/network/business checks after validation in higher layers.')
 
   // --- Run 1: Invalid Data ---
   console.log('\n--- 1. Testing Invalid Data to Showcase Errors ---')
   console.log('Input:', invalidInput)
 
-  const { validatedObject: invalidResult, errors: invalidErrors } = await comprehensiveSchema.create(invalidInput)
+  const { validatedObject: invalidResult, errors: invalidErrors } = comprehensiveSchema.create(invalidInput)
 
   console.log('\nValidated Object (after attempting validation):', invalidResult)
   console.log('\nValidation Errors Found:')
@@ -122,7 +123,7 @@ async function runComprehensiveExample () {
   console.log('\n\n--- 2. Testing Valid Data to Showcase Casting and Defaults ---')
 
   // We run this with create semantics so defaultTo is applied
-  const { validatedObject: validResult, errors: validErrors } = await comprehensiveSchema.create(validInput)
+  const { validatedObject: validResult, errors: validErrors } = comprehensiveSchema.create(validInput)
 
   console.log('Input:', validInput)
   console.log('\nValidated Object (after successful validation):', validResult)

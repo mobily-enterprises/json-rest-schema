@@ -7,7 +7,7 @@
  * 2. Run the command: `node --test`
  */
 
-import { test, describe, it, before } from 'node:test'
+import { describe, it } from 'node:test'
 import assert from 'node:assert'
 import { createSchema } from './src/index.js'
 import { Schema } from './src/Schema.js'
@@ -36,21 +36,21 @@ describe('1. Core API (`createSchema`)', () => {
     assert.ok(mySchema instanceof Schema, 'Did not return a Schema instance')
   })
 
-  it('should allow adding a type handler and using it', async () => {
+  it('should allow adding a type handler and using it', () => {
     createSchema.addType('custom-string', ctx => `custom-${ctx.value}`)
     const schema = createSchema({ name: { type: 'custom-string' } })
-    const { validatedObject } = await schema.create({ name: 'test' })
+    const { validatedObject } = schema.create({ name: 'test' })
     assert.strictEqual(validatedObject.name, 'custom-test')
   })
 
-  it('should allow adding a validator and using it', async () => {
+  it('should allow adding a validator and using it', () => {
     createSchema.addValidator('must-be-awesome', ctx => {
       if (ctx.value !== 'awesome') {
         ctx.throwParamError('NOT_AWESOME', 'This field must be awesome')
       }
     })
     const schema = createSchema({ framework: { type: 'string', 'must-be-awesome': true } })
-    const { errors } = await schema.create({ framework: 'good' })
+    const { errors } = schema.create({ framework: 'good' })
     assertError(errors, 'framework', 'NOT_AWESOME')
   })
 
@@ -69,60 +69,60 @@ describe('1. Core API (`createSchema`)', () => {
 })
 
 describe('2. Core Validation Logic (`Schema.js`)', () => {
-  it('should return no errors for a valid object', async () => {
+  it('should return no errors for a valid object', () => {
     const schema = createSchema({ name: { type: 'string' } })
-    const { errors } = await schema.create({ name: 'test' })
+    const { errors } = schema.create({ name: 'test' })
     assert.strictEqual(Object.keys(errors).length, 0)
   })
 
-  it('should return a `FIELD_NOT_ALLOWED` error for spurious fields', async () => {
+  it('should return a `FIELD_NOT_ALLOWED` error for spurious fields', () => {
     const schema = createSchema({ name: { type: 'string' } })
-    const { errors } = await schema.create({ name: 'test', extra: 'field' })
+    const { errors } = schema.create({ name: 'test', extra: 'field' })
     assert.strictEqual(Object.keys(errors).length, 1)
     assertError(errors, 'extra', 'FIELD_NOT_ALLOWED')
   })
 
-  it('should correctly handle the `required` validator', async () => {
+  it('should correctly handle the `required` validator', () => {
     const schema = createSchema({ name: { type: 'string', required: true } })
-    const { errors } = await schema.create({})
+    const { errors } = schema.create({})
     assert.strictEqual(Object.keys(errors).length, 1)
     assertError(errors, 'name', 'REQUIRED')
   })
 
-  it('should return a `NOT_NULLABLE` error if a field is null but not allowed to be', async () => {
+  it('should return a `NOT_NULLABLE` error if a field is null but not allowed to be', () => {
     const schema = createSchema({ name: { type: 'string' } })
-    const { errors } = await schema.create({ name: null })
+    const { errors } = schema.create({ name: null })
     assertError(errors, 'name', 'NOT_NULLABLE')
   })
 
-  it('should allow null if `nullable` is true', async () => {
+  it('should allow null if `nullable` is true', () => {
     const schema = createSchema({ name: { type: 'string', nullable: true } })
-    const { errors, validatedObject } = await schema.create({ name: null })
+    const { errors, validatedObject } = schema.create({ name: null })
     assert.strictEqual(Object.keys(errors).length, 0)
     assert.strictEqual(validatedObject.name, null)
   })
 
-  it('should cast empty string to null if `nullOnEmpty` is true', async () => {
+  it('should cast empty string to null if `nullOnEmpty` is true', () => {
     const schema = createSchema({ name: { type: 'string', nullOnEmpty: true } })
-    const { errors, validatedObject } = await schema.create({ name: '' })
+    const { errors, validatedObject } = schema.create({ name: '' })
     assert.strictEqual(Object.keys(errors).length, 0)
     assert.strictEqual(validatedObject.name, null)
   })
 
-  it('should apply defaultTo values even when the object has validation errors', async () => {
+  it('should apply defaultTo values even when the object has validation errors', () => {
     const schema = createSchema({
       name: { type: 'string', required: true },
       role: { type: 'string', defaultTo: 'user' },
     })
 
     // Case 1: Invalid object (missing required field), defaultTo should still be applied.
-    const { validatedObject: invalidObj, errors } = await schema.create({})
+    const { validatedObject: invalidObj, errors } = schema.create({})
     assert.strictEqual(Object.keys(errors).length, 1)
     assert.strictEqual(invalidObj.role, 'user', 'defaultTo should be applied even to invalid objects')
     assert.strictEqual(Object.hasOwn(invalidObj, 'name'), false, 'Missing required field should remain omitted in create-mode validation')
 
     // Case 2: Valid object, defaultTo should also be applied.
-    const { validatedObject: validObj, errors: validErrors } = await schema.create({ name: 'test' })
+    const { validatedObject: validObj, errors: validErrors } = schema.create({ name: 'test' })
     assert.strictEqual(Object.keys(validErrors).length, 0)
     assert.strictEqual(validObj.role, 'user')
   })
@@ -133,14 +133,14 @@ describe('2. Core Validation Logic (`Schema.js`)', () => {
       role: { type: 'string', defaultTo: 'guest' }
     })
 
-    it('`skipFields`: should completely ignore specified fields', async () => {
-      const { errors } = await schema.create({ name: 'a' }, { skipFields: ['name'] })
+    it('`skipFields`: should completely ignore specified fields', () => {
+      const { errors } = schema.create({ name: 'a' }, { skipFields: ['name'] })
       assert.strictEqual(Object.keys(errors).length, 0)
     })
 
-    it('`skipParams`: should skip specific validators on a field', async () => {
+    it('`skipParams`: should skip specific validators on a field', () => {
       // name: 'a' would fail `minLength: 3`, but we skip it
-      const { errors } = await schema.create({ name: 'a' }, { skipParams: { name: ['minLength'] } })
+      const { errors } = schema.create({ name: 'a' }, { skipParams: { name: ['minLength'] } })
       assert.strictEqual(Object.keys(errors).length, 0)
     })
   })
@@ -152,8 +152,8 @@ describe('2. Core Validation Logic (`Schema.js`)', () => {
       bio: { type: 'string', nullable: true }
     })
 
-    it('`create()` should enforce required fields, apply defaults, and omit untouched optional fields', async () => {
-      const { validatedObject, errors } = await schema.create({ name: '  Alex  ' })
+    it('`create()` should enforce required fields, apply defaults, and omit untouched optional fields', () => {
+      const { validatedObject, errors } = schema.create({ name: '  Alex  ' })
       assert.strictEqual(Object.keys(errors).length, 0)
       assert.deepStrictEqual(validatedObject, {
         name: 'Alex',
@@ -161,8 +161,8 @@ describe('2. Core Validation Logic (`Schema.js`)', () => {
       })
     })
 
-    it('`replace()` should enforce required fields and preserve omitted optional fields', async () => {
-      const { validatedObject, errors } = await schema.replace({ name: '  Alex  ' })
+    it('`replace()` should enforce required fields and preserve omitted optional fields', () => {
+      const { validatedObject, errors } = schema.replace({ name: '  Alex  ' })
       assert.strictEqual(Object.keys(errors).length, 0)
       assert.deepStrictEqual(validatedObject, {
         name: 'Alex',
@@ -170,36 +170,36 @@ describe('2. Core Validation Logic (`Schema.js`)', () => {
       })
     })
 
-    it('`patch()` should only validate and return explicitly provided fields', async () => {
-      const { validatedObject, errors } = await schema.patch({ name: '  Alex  ' })
+    it('`patch()` should only validate and return explicitly provided fields', () => {
+      const { validatedObject, errors } = schema.patch({ name: '  Alex  ' })
       assert.strictEqual(Object.keys(errors).length, 0)
       assert.deepStrictEqual(validatedObject, {
         name: 'Alex'
       })
     })
 
-    it('`patch()` should not enforce missing required fields when they are absent', async () => {
-      const { validatedObject, errors } = await schema.patch({ bio: null })
+    it('`patch()` should not enforce missing required fields when they are absent', () => {
+      const { validatedObject, errors } = schema.patch({ bio: null })
       assert.strictEqual(Object.keys(errors).length, 0)
       assert.deepStrictEqual(validatedObject, {
         bio: null
       })
     })
 
-    it('operation methods should reject removed validation options instead of aliasing old behavior', async () => {
-      await assert.rejects(
-        async () => schema.create({ role: 'admin' }, { onlyObjectValues: true }),
+    it('operation methods should reject removed validation options instead of aliasing old behavior', () => {
+      assert.throws(
+        () => schema.create({ role: 'admin' }, { onlyObjectValues: true }),
         /Unsupported validation option `onlyObjectValues`/
       )
 
-      await assert.rejects(
-        async () => schema.create({ role: 'admin' }, { mode: 'patch' }),
+      assert.throws(
+        () => schema.create({ role: 'admin' }, { mode: 'patch' }),
         /Unsupported validation option `mode`/
       )
     })
 
-    it('operation contracts should reject explicitly undefined fields instead of silently treating them as absent', async () => {
-      const { errors } = await schema.patch({ name: undefined })
+    it('operation contracts should reject explicitly undefined fields instead of silently treating them as absent', () => {
+      const { errors } = schema.patch({ name: undefined })
       assertError(errors, 'name', 'TYPE_CAST_FAILED')
     })
   })
@@ -220,6 +220,7 @@ describe('2.5. Transport JSON Schema Export', () => {
     const schema = createSchema({
       id: { type: 'id', required: true },
       name: { type: 'string', required: true, minLength: 3, maxLength: 10 },
+      count: { type: 'integer', min: 1, max: 9 },
       age: { type: 'number', min: 18, defaultTo: 18 },
       isActive: { type: 'boolean', nullable: true },
       nickname: { type: 'string', nullOnEmpty: true, notEmpty: true }
@@ -242,6 +243,12 @@ describe('2.5. Transport JSON Schema Export', () => {
           minLength: 3,
           maxLength: 10,
           'x-json-rest-schema': { castType: 'string' }
+        },
+        count: {
+          type: ['integer', 'string'],
+          minimum: 1,
+          maximum: 9,
+          'x-json-rest-schema': { castType: 'integer' }
         },
         age: {
           type: ['number', 'string'],
@@ -272,6 +279,19 @@ describe('2.5. Transport JSON Schema Export', () => {
       additionalProperties: false,
       required: ['id', 'name']
     })
+  })
+
+  it('should cast integer values and reject non-integers', () => {
+    const schema = createSchema({
+      count: { type: 'integer', required: true, min: 1, max: 9 }
+    })
+
+    const { validatedObject, errors } = schema.create({ count: '7' })
+    assert.deepStrictEqual(errors, {})
+    assert.strictEqual(validatedObject.count, 7)
+
+    const invalid = schema.create({ count: '7.5' })
+    assert.strictEqual(invalid.errors.count.code, 'TYPE_CAST_FAILED')
   })
 
   it('should omit required fields and defaults in patch mode', () => {
@@ -495,9 +515,9 @@ describe('3. Core Plugin: Type Handlers', () => {
       ? `type:'${type}' should fail for input: ${JSON.stringify(input.field)}`
       : `type:'${type}' should process input ${JSON.stringify(input.field)} to ${JSON.stringify(expected)}`
 
-    it(title, async () => {
+    it(title, () => {
       const schema = createSchema({ field: { type, ...options } })
-      const { validatedObject, errors } = await schema.create(input)
+      const { validatedObject, errors } = schema.create(input)
 
       if (error) {
         assertError(errors, 'field', error)
@@ -508,22 +528,22 @@ describe('3. Core Plugin: Type Handlers', () => {
     })
   })
 
-  it("type:'serialize' should process an object to a string", async () => {
+  it("type:'serialize' should process an object to a string", () => {
     const schema = createSchema({ field: { type: 'serialize' } })
     const inputObject = { a: 1, b: 2 }
     const input = { field: inputObject }
     const expected = JSON.stringify(inputObject)
-    const { validatedObject, errors } = await schema.create(input)
+    const { validatedObject, errors } = schema.create(input)
 
     assert.strictEqual(Object.keys(errors).length, 0, `Expected no errors but found: ${JSON.stringify(errors)}`)
     assert.strictEqual(validatedObject.field, expected)
   })
 
-  it('type:`serialize` should handle circular references', async () => {
+  it('type:`serialize` should handle circular references', () => {
     const schema = createSchema({ field: { type: 'serialize' } })
     const circular = { a: 1 }
     circular.b = circular
-    const { validatedObject, errors } = await schema.create({ field: circular })
+    const { validatedObject, errors } = schema.create({ field: circular })
     assert.strictEqual(Object.keys(errors).length, 0)
     assert.strictEqual(typeof validatedObject.field, 'string')
 
@@ -533,85 +553,122 @@ describe('3. Core Plugin: Type Handlers', () => {
 })
 
 describe('4. Core Plugin: Validator Handlers', () => {
-  it('`min`/`max` validators should work for numbers, `minLength`/`maxLength` for strings', async () => {
+  it('`min`/`max` validators should work for numbers, `minLength`/`maxLength` for strings', () => {
     const schema = createSchema({
       num: { type: 'number', min: 10, max: 20 },
       str: { type: 'string', minLength: 3, maxLength: 5 },
     })
 
-    const { errors: err1 } = await schema.create({ num: 9, str: 'hi' })
+    const { errors: err1 } = schema.create({ num: 9, str: 'hi' })
     assertError(err1, 'num', 'MIN_VALUE')
     assertError(err1, 'str', 'MIN_LENGTH')
     assert.deepStrictEqual(err1.num.params, { min: 10, actual: 9 })
     assert.deepStrictEqual(err1.str.params, { min: 3, actual: 2 })
 
-    const { errors: err2 } = await schema.create({ num: 21, str: 'hello world' })
+    const { errors: err2 } = schema.create({ num: 21, str: 'hello world' })
     assertError(err2, 'num', 'MAX_VALUE')
     assertError(err2, 'str', 'MAX_LENGTH')
   })
 
-  it('`validator` should work with a custom function (sync and async)', async () => {
+  it('`validator` should work with a custom synchronous function', () => {
     const schema = createSchema({
-      syncField: { type: 'string', validator: (val) => val === 'ok' ? undefined : 'Value must be "ok"' },
-      asyncField: {
-        type: 'string',
-        validator: async (val) => {
-          await new Promise(r => setTimeout(r, 10))
-          return val === 'async_ok' ? undefined : 'Value must be "async_ok"'
-        }
-      }
+      syncField: { type: 'string', validator: (val) => val === 'ok' ? undefined : 'Value must be "ok"' }
     })
 
-    const { errors: err1 } = await schema.create({ syncField: 'not_ok', asyncField: 'not_ok' })
+    const { errors: err1 } = schema.create({ syncField: 'not_ok' })
     assertError(err1, 'syncField', 'CUSTOM_VALIDATOR_FAILED')
-    assertError(err1, 'asyncField', 'CUSTOM_VALIDATOR_FAILED')
 
-    const { errors: err2 } = await schema.create({ syncField: 'ok', asyncField: 'async_ok' })
+    const { errors: err2 } = schema.create({ syncField: 'ok' })
     assert.strictEqual(Object.keys(err2).length, 0)
   })
 
-  it('`enum` should enforce membership against the declared enum values', async () => {
+  it('`validator` should throw clearly when a custom validator returns a Promise', () => {
+    const schema = createSchema({
+      field: {
+        type: 'string',
+        validator: () => Promise.resolve('not allowed')
+      }
+    })
+
+    assert.throws(
+      () => schema.create({ field: 'value' }),
+      /Custom validator for "field" must be synchronous\./
+    )
+  })
+
+  it('validator handlers should throw clearly when a registered validator returns a Promise', () => {
+    createSchema.addValidator('promise-validator-handler', () => Promise.resolve())
+
+    const schema = createSchema({
+      field: {
+        type: 'string',
+        'promise-validator-handler': true
+      }
+    })
+
+    assert.throws(
+      () => schema.create({ field: 'value' }),
+      /Validator handler for "promise-validator-handler" must be synchronous\./
+    )
+  })
+
+  it('type handlers should throw clearly when a registered type returns a Promise', () => {
+    createSchema.addType('promise-type-handler', () => Promise.resolve('value'))
+
+    const schema = createSchema({
+      field: {
+        type: 'promise-type-handler'
+      }
+    })
+
+    assert.throws(
+      () => schema.create({ field: 'value' }),
+      /Type handler for "promise-type-handler" must be synchronous\./
+    )
+  })
+
+  it('`enum` should enforce membership against the declared enum values', () => {
     const schema = createSchema({
       status: { type: 'string', enum: ['draft', 'published', 'archived'] }
     })
 
-    const { errors: invalidErrors } = await schema.create({ status: 'deleted' })
+    const { errors: invalidErrors } = schema.create({ status: 'deleted' })
     assertError(invalidErrors, 'status', 'ENUM_VALUE')
 
-    const { errors: validErrors } = await schema.create({ status: 'published' })
+    const { errors: validErrors } = schema.create({ status: 'published' })
     assert.strictEqual(Object.keys(validErrors).length, 0)
   })
 
-  it('`uppercase`/`lowercase` should transform strings', async () => {
+  it('`uppercase`/`lowercase` should transform strings', () => {
     const schema = createSchema({
       upper: { type: 'string', uppercase: true },
       lower: { type: 'string', lowercase: true },
     })
-    const { validatedObject } = await schema.create({ upper: 'test', lower: 'TEST' })
+    const { validatedObject } = schema.create({ upper: 'test', lower: 'TEST' })
     assert.strictEqual(validatedObject.upper, 'TEST')
     assert.strictEqual(validatedObject.lower, 'test')
   })
 
-  it('`length` should truncate strings and error on long numbers', async () => {
+  it('`length` should truncate strings and error on long numbers', () => {
     const schema = createSchema({
       str: { type: 'string', length: 5 },
       num: { type: 'number', length: 3 }
     })
 
-    const { validatedObject, errors } = await schema.create({ str: '123456789', num: 1234 })
+    const { validatedObject, errors } = schema.create({ str: '123456789', num: 1234 })
     assert.strictEqual(validatedObject.str, '12345')
     assertError(errors, 'num', 'RANGE_EXCEEDED')
   })
 
-  it('`notEmpty` should fail on empty strings', async () => {
+  it('`notEmpty` should fail on empty strings', () => {
     const schema = createSchema({ field: { type: 'string', notEmpty: true } })
-    const { errors } = await schema.create({ field: '' })
+    const { errors } = schema.create({ field: '' })
     assertError(errors, 'field', 'NOT_EMPTY')
   })
 })
 
 describe('5. Extensibility: Custom Plugins', () => {
-  it('should allow defining and using a custom plugin', async () => {
+  it('should allow defining and using a custom plugin', () => {
     // 1. Define the plugin
     const myPlugin = {
       install (api) {
@@ -639,7 +696,7 @@ describe('5. Extensibility: Custom Plugins', () => {
     })
 
     // 4. Test it
-    const { validatedObject, errors } = await schema.create({
+    const { validatedObject, errors } = schema.create({
       color: '#FF00AA',
       mood: 'awesome'
     })
@@ -648,7 +705,7 @@ describe('5. Extensibility: Custom Plugins', () => {
     assert.strictEqual(validatedObject.color, '#ff00aa')
     assert.strictEqual(validatedObject.mood, 'awesome')
 
-    const { errors: failErrors } = await schema.create({
+    const { errors: failErrors } = schema.create({
       color: 'red',
       mood: 'good'
     })

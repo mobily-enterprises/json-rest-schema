@@ -12,6 +12,9 @@ Our primary goal for this library is to provide a robust, extensible, and **easy
 * **Clear Separation of Concerns:** The responsibility for *defining* types/validators is separate from the responsibility for *applying* them during validation.
 * **Plugin-Based Extensibility:** New types and validators can be seamlessly added through a straightforward plugin system.
 * **Direct API Access:** Key functions for interacting with the library are exposed directly, minimizing layers of abstraction.
+* **Synchronous Shared Contracts:** Schemas are intentionally synchronous so the same contract can run on both client and server without pulling in database, network, or other stateful dependencies.
+
+Because of that last point, this library owns typing, casting, normalization, and local validation only. Business rules that require I/O belong in higher layers such as services, repositories, or actions.
 
 ---
 
@@ -66,11 +69,11 @@ While `index.js` manages the global registries, the `Schema` class is where the 
 
 * **Self-Contained Validation Logic:** Each instance of `Schema` represents a single, defined data structure. It contains the logic to traverse an input object, apply type casting, and run validation rules against its own `structure`.
 * **Dependency Injection in Constructor:** Unlike the previous design, the `Schema` constructor (`constructor(structure, types, validators)`) now explicitly receives the `types` and `validators` registries it needs from the `createSchema` factory function. This makes its dependencies clear and improves its testability.
-* **`_validateField` Method:** This private method is the granular core of the validation. For each field in your schema, it orchestrates:
+* **`_validateField` Method:** This private method is the granular core of the validation. For each field in your schema, it synchronously orchestrates:
     1.  **Pre-checks:** Handling `required` rules, skipping fields, and dealing with `null` or empty values based on options.
     2.  **Type Casting:** It looks up the appropriate type handler from its received `this.types` registry and attempts to transform the field's value.
     3.  **Parameter Validation:** It then iterates through any validation parameters defined for the field (e.g., `min`, `max`, `validator`), looks up their respective handlers in `this.validators`, and applies them.
-* **`validate` Method:** This public asynchronous method orchestrates the validation of an entire object. It identifies allowed/disallowed fields, concurrently validates all fields using `_validateField`, collects all errors, and finally applies any `default` values to missing fields if the overall validation is successful.
+* **Operation Methods (`create`, `replace`, `patch`):** These public synchronous methods orchestrate validation for a whole object. They identify allowed/disallowed fields, validate fields in a plain loop, collect all errors, and apply any `defaultTo` values required by the active operation contract.
 
 ### 2.3. `./src/CorePlugin.js` - The Default Toolbox
 
@@ -79,6 +82,6 @@ This file simply defines all the standard, built-in type and validator handlers 
 **Key Features of `CorePlugin.js`:**
 
 * **The `install` Method:** This is the critical part. As discussed, its `install` method is designed to receive the `addType` and `addValidator` functions. It then calls these functions multiple times, registering all the core functionalities like `string`, `number`, `boolean` types, and `min`, `max`, `notEmpty` validators.
-* **Clear Definition of Default Handlers:** It provides well-defined functions for common data transformations and validation checks, serving as excellent examples for how to write your own custom types and validators.
+* **Clear Definition of Default Handlers:** It provides well-defined synchronous functions for common data transformations and validation checks, serving as excellent examples for how to write your own custom types and validators.
 
 ---

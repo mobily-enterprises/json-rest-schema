@@ -22,11 +22,16 @@ const BUILTIN_TYPE_EXPORTERS = {
   file: () => ({ type: 'string' }),
   string: () => ({ type: 'string' }),
   number: () => ({ type: ['number', 'string'] }),
+  integer: () => ({ type: ['integer', 'string'] }),
   timestamp: () => ({ type: ['number', 'string'] }),
   dateTime: () => ({ type: 'string' }),
   date: () => ({ type: 'string' }),
   time: () => ({ type: 'string' }),
   boolean: ({ definition }) => {
+    if (definition.strictBoolean === true) {
+      return { type: 'boolean' }
+    }
+
     const trueValues = new Set([...BOOLEAN_TRUE_VALUES, String(definition.stringTrueWhen || 'true').trim().toLowerCase()])
     const falseValues = new Set([...BOOLEAN_FALSE_VALUES, String(definition.stringFalseWhen || 'false').trim().toLowerCase()])
 
@@ -48,8 +53,8 @@ const BUILTIN_TYPE_EXPORTERS = {
 const BUILTIN_VALIDATOR_EXPORTERS = {
   minLength: ({ definition, parameterValue }) => definition.type === 'string' ? { minLength: parameterValue } : null,
   maxLength: ({ definition, parameterValue }) => definition.type === 'string' ? { maxLength: parameterValue } : null,
-  min: ({ definition, parameterValue }) => definition.type === 'number' ? { minimum: parameterValue } : null,
-  max: ({ definition, parameterValue }) => definition.type === 'number' ? { maximum: parameterValue } : null,
+  min: ({ definition, parameterValue }) => (definition.type === 'number' || definition.type === 'integer') ? { minimum: parameterValue } : null,
+  max: ({ definition, parameterValue }) => (definition.type === 'number' || definition.type === 'integer') ? { maximum: parameterValue } : null,
   enum: ({ parameterValue }) => ({ enum: parameterValue }),
   notEmpty: ({ parameterValue, definition }) => {
     if (!parameterValue) return null
@@ -63,6 +68,7 @@ const BUILTIN_VALIDATOR_EXPORTERS = {
   precision: ({ parameterValue }) => extensionMetadataFragment('metadata', { precision: parameterValue }),
   scale: ({ parameterValue }) => extensionMetadataFragment('metadata', { scale: parameterValue }),
   temporalPrecision: ({ parameterValue }) => extensionMetadataFragment('metadata', { temporalPrecision: parameterValue }),
+  strictBoolean: () => null,
   required: () => null,
   nullable: () => null,
   nullOnEmpty: () => null,

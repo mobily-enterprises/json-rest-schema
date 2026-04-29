@@ -13,6 +13,31 @@ Welcome! This tutorial will walk you through everything you need to know to use 
 
 It is **not** the place for database-backed uniqueness checks, external API lookups, or any other stateful async business rule. Put those checks in higher layers such as services, repositories, or actions after schema validation has produced a normalized payload.
 
+## Documentation
+
+This repo now ships a VitePress documentation site that renders this `README.md` as the main documentation page.
+
+Run it locally with:
+
+```bash
+npm install
+npm run docs:dev
+```
+
+Build it with:
+
+```bash
+npm run docs:build
+```
+
+The docs site is the best place to read the polished guides for:
+
+* create / replace / patch semantics
+* nested object and array contracts
+* React Hook Form, Vue + Vuetify, and VeeValidate adapters
+* demo app walkthroughs
+* fair comparisons with libraries like TypeBox, Joi, Zod, and Valibot
+
 ## 1. Getting Started: Your First Schema
 
 Let's start with a common use case: validating a user registration form.
@@ -119,6 +144,120 @@ The output would look like this:
 * **`code`**: A stable, machine-readable string. Use this in your code for logic (`if (err.code === 'MIN_LENGTH')`).
 * **`message`**: A human-readable message, great for developers or for displaying directly to users in simple cases.
 * **`params`**: Extra context about the failure. This is incredibly useful for creating dynamic error messages (e.g., "You entered 2 characters, but a minimum of 3 is required.").
+
+#### Error helper utilities
+
+If you want a few adapter-friendly utilities around that flat error map, import them directly:
+
+```javascript
+import { createSchema, getError, hasError, nestErrors, flattenErrors } from 'json-rest-schema'
+```
+
+`getError(errors, path)` reads one dotted-path error:
+
+```javascript
+const slugError = getError(errors, 'workspace.slug')
+```
+
+`hasError(errors, path)` is the small boolean version:
+
+```javascript
+const showSlugError = hasError(errors, 'workspace.slug')
+```
+
+`nestErrors(errors)` converts the flat map into a nested object/array shape for form libraries that prefer nested field errors:
+
+```javascript
+nestErrors({
+  'workspace.slug': {
+    field: 'workspace.slug',
+    code: 'MIN_LENGTH',
+    message: 'Length must be at least 3 characters.',
+    params: { min: 3, actual: 1 }
+  },
+  'roles.2.label': {
+    field: 'roles.2.label',
+    code: 'REQUIRED',
+    message: 'Field is required',
+    params: {}
+  }
+})
+```
+
+Result:
+
+```javascript
+{
+  workspace: {
+    slug: {
+      field: 'workspace.slug',
+      code: 'MIN_LENGTH',
+      message: 'Length must be at least 3 characters.',
+      params: { min: 3, actual: 1 }
+    }
+  },
+  roles: [
+    ,
+    ,
+    {
+      label: {
+        field: 'roles.2.label',
+        code: 'REQUIRED',
+        message: 'Field is required',
+        params: {}
+      }
+    }
+  ]
+}
+```
+
+That keeps the runtime contract flat, while still making it easy to adapt into nested UI-state libraries.
+
+`flattenErrors(nestedErrors)` does the reverse when a UI layer gives you nested field errors and you want to normalize them back into the library's flat contract:
+
+```javascript
+flattenErrors({
+  workspace: {
+    slug: {
+      field: 'workspace.slug',
+      code: 'MIN_LENGTH',
+      message: 'Length must be at least 3 characters.',
+      params: { min: 3, actual: 1 }
+    }
+  },
+  roles: [
+    ,
+    ,
+    {
+      label: {
+        field: 'roles.2.label',
+        code: 'REQUIRED',
+        message: 'Field is required',
+        params: {}
+      }
+    }
+  ]
+})
+```
+
+Result:
+
+```javascript
+{
+  'workspace.slug': {
+    field: 'workspace.slug',
+    code: 'MIN_LENGTH',
+    message: 'Length must be at least 3 characters.',
+    params: { min: 3, actual: 1 }
+  },
+  'roles.2.label': {
+    field: 'roles.2.label',
+    code: 'REQUIRED',
+    message: 'Field is required',
+    params: {}
+  }
+}
+```
 
 ### Operation Contracts
 
@@ -586,6 +725,1028 @@ workspaceViewSchema.patch({
 ```
 
 This keeps the options model flat and consistent with the error map.
+
+### Path-Scoped Validation for Forms and Interactive UIs
+
+Full-object validation is still the right tool for submit boundaries:
+
+```javascript
+const result = userSchema.create(payload)
+```
+
+But forms often need something narrower:
+
+* validate one field on blur
+* validate a small step in a wizard
+* normalize only the field the user just touched
+* avoid triggering unrelated sibling errors while the user is still editing
+
+That is what `validateAt()` and `validatePaths()` are for.
+
+#### `validateAt(path, object, options)`
+
+Use `validateAt()` when you want one path.
+
+```javascript
+const profileSchema = createSchema({
+  name: { type: 'string', required: true, minLength: 3 },
+  role: { type: 'string', defaultTo: 'guest' }
+})
+
+profileSchema.validateAt('name', {
+  name: '  Alex  '
+})
+```
+
+Result:
+
+```javascript
+{
+  validatedValue: 'Alex',
+  errors: {}
+}
+```
+
+By default, path validation uses **`patch` semantics**. That means:
+
+* only the selected path is validated
+* missing required siblings do not produce errors
+* defaults do not apply unless you explicitly choose an operation that applies them
+
+If you want create-style or replace-style behavior for the exact selected path, pass `operation`.
+
+```javascript
+profileSchema.validateAt('role', {}, { operation: 'create' })
+```
+
+Result:
+
+```javascript
+{
+  validatedValue: 'guest',
+  errors: {}
+}
+```
+
+If you want required checks for the exact selected field:
+
+```javascript
+profileSchema.validateAt('name', {}, { operation: 'create' })
+```
+
+Result:
+
+```javascript
+{
+  validatedValue: undefined,
+  errors: {
+    name: {
+      field: 'name',
+      code: 'REQUIRED',
+      message: 'Field is required',
+      params: {}
+    }
+  }
+}
+```
+
+#### Nested path example
+
+This is where path-scoped validation becomes most useful.
+
+```javascript
+const workspaceSummarySchema = createSchema({
+  id: { type: 'id', required: true },
+  slug: { type: 'string', required: true, minLength: 3 },
+  ownerUserId: { type: 'id', required: true }
+})
+
+const workspaceSchema = createSchema({
+  workspace: {
+    type: 'object',
+    required: true,
+    schema: workspaceSummarySchema
+  }
+})
+```
+
+Validate only `workspace.slug`:
+
+```javascript
+workspaceSchema.validateAt('workspace.slug', {
+  workspace: {
+    slug: '  primary  '
+  }
+}, {
+  operation: 'create'
+})
+```
+
+Result:
+
+```javascript
+{
+  validatedValue: 'primary',
+  errors: {}
+}
+```
+
+Notice what did **not** happen:
+
+* `workspace.id` was not required
+* `workspace.ownerUserId` was not required
+* unrelated nested keys were not validated
+
+That is the point of the API. It validates the **selected path**, not the whole object.
+
+If you select the whole object path instead:
+
+```javascript
+workspaceSchema.validateAt('workspace', {
+  workspace: {
+    slug: '  primary  '
+  }
+}, {
+  operation: 'create'
+})
+```
+
+Result:
+
+```javascript
+{
+  validatedValue: {
+    slug: 'primary'
+  },
+  errors: {
+    'workspace.id': {
+      field: 'workspace.id',
+      code: 'REQUIRED',
+      message: 'Field is required',
+      params: {}
+    },
+    'workspace.ownerUserId': {
+      field: 'workspace.ownerUserId',
+      code: 'REQUIRED',
+      message: 'Field is required',
+      params: {}
+    }
+  }
+}
+```
+
+That distinction is intentional:
+
+* selecting `workspace.slug` validates one field
+* selecting `workspace` validates the whole nested object contract
+
+#### `validatePaths(paths, object, options)`
+
+Use `validatePaths()` when you want a subset of fields or a whole form step.
+
+```javascript
+const stepSchema = createSchema({
+  workspace: {
+    type: 'object',
+    schema: workspaceSummarySchema
+  },
+  status: { type: 'string', defaultTo: 'draft' }
+})
+
+stepSchema.validatePaths([
+  'workspace.slug',
+  'status'
+], {
+  workspace: {
+    slug: '  next  '
+  }
+}, {
+  operation: 'create'
+})
+```
+
+Result:
+
+```javascript
+{
+  validatedObject: {
+    workspace: {
+      slug: 'next'
+    },
+    status: 'draft'
+  },
+  errors: {}
+}
+```
+
+This is useful for:
+
+* wizard-step validation
+* validating only dirty fields
+* validating a form section before moving on
+
+#### Path options and compatibility
+
+Path-scoped validation supports the same flat nested option model:
+
+```javascript
+workspaceSchema.validatePaths([
+  'workspace.slug'
+], {
+  workspace: {
+    slug: 'x'
+  }
+}, {
+  operation: 'patch',
+  skipParams: {
+    'workspace.slug': ['minLength']
+  }
+})
+```
+
+`mode` also works as compatibility sugar for the built-in operations:
+
+```javascript
+workspaceSchema.validateAt('workspace.slug', values, { mode: 'patch' })
+```
+
+#### Form integration guidance
+
+These APIs are meant to help form adapters, but the library still does **not** become a form framework.
+
+Recommended approach:
+
+* keep raw input state in the UI while the user is typing
+* use `validateAt()` or `validatePaths()` to compute errors and normalized values
+* apply full normalization on submit with `create()`, `replace()`, or `patch()`
+
+That matters because aggressive normalization during typing can be annoying:
+
+* trimming on every keypress can move the cursor
+* number coercion can fight half-finished input such as `12.`
+* nested defaults can appear before the user has actually submitted anything
+
+So the intended split is:
+
+* **interactive validation**: `validateAt()` / `validatePaths()`
+* **submit boundary validation**: `create()` / `replace()` / `patch()`
+
+### React Hook Form Resolver
+
+If you use React Hook Form, this package now ships a dedicated resolver adapter as a separate subpath export:
+
+```javascript
+import { useForm } from 'react-hook-form'
+import { createSchema } from 'json-rest-schema'
+import { jsonRestSchemaResolver } from 'json-rest-schema/react-hook-form'
+```
+
+That import path is intentional. The resolver lives outside the main schema engine so the core library does not become React-specific.
+
+#### Basic usage
+
+```javascript
+const profileSchema = createSchema({
+  name: { type: 'string', required: true, minLength: 3 },
+  role: { type: 'string', defaultTo: 'guest' }
+})
+
+const form = useForm({
+  resolver: jsonRestSchemaResolver(profileSchema)
+})
+```
+
+By default, the resolver uses **`create` semantics** for full-form validation.
+
+That means:
+
+* required fields are enforced
+* defaults are applied on successful full-form validation
+* the resolver itself returns normalized success values for full-form validation
+
+So if the user submits:
+
+```javascript
+{
+  name: '  Alex  '
+}
+```
+
+the resolver will hand React Hook Form a successful value object equivalent to:
+
+```javascript
+{
+  name: 'Alex',
+  role: 'guest'
+}
+```
+
+One real-world nuance matters here: React Hook Form still owns its internal field
+state. In practice, that means a successful resolver pass does **not** always mean
+your submit handler receives a canonical normalized payload directly from RHF's state.
+
+If you need a final REST-ready payload, run one last schema operation in the submit
+handler:
+
+```javascript
+const form = useForm({
+  resolver: jsonRestSchemaResolver(profileSchema)
+})
+
+const onSubmit = rawValues => {
+  const { validatedObject, errors } = profileSchema.create(rawValues)
+  if (Object.keys(errors).length > 0) return
+
+  saveProfile(validatedObject)
+}
+```
+
+That split is intentional:
+
+* RHF keeps raw interactive field state
+* the schema owns final normalization at the submit boundary
+* the UI is free to avoid aggressive value rewriting while the user is typing
+
+#### Edit forms and custom operations
+
+If the form is editing an existing resource, use a different operation explicitly.
+
+For a patch-style form:
+
+```javascript
+const form = useForm({
+  resolver: jsonRestSchemaResolver(profileSchema, {
+    operation: 'patch'
+  })
+})
+```
+
+You can also use any custom operation you have registered on the schema:
+
+```javascript
+const form = useForm({
+  resolver: jsonRestSchemaResolver(profileSchema, {
+    operation: 'upsert'
+  })
+})
+```
+
+#### Field-level re-validation behavior
+
+React Hook Form re-validates one field at a time during user interaction. The resolver uses the core path APIs for that subset validation.
+
+Important behavior:
+
+* only the selected RHF field names are validated during field-level re-validation
+* sibling required fields do **not** leak into a single-field re-validation pass
+* by default, field-level re-validation keeps **raw form values** instead of forcing normalized values back into the UI while the user is typing
+
+That default matters because aggressive normalization during typing can feel bad:
+
+* trimmed strings can move the cursor
+* number coercion can fight half-complete input
+* defaults can appear before submit
+
+#### Opting into normalized field-level values
+
+If you explicitly want normalized field values during field-level re-validation, opt in:
+
+```javascript
+const form = useForm({
+  resolver: jsonRestSchemaResolver(
+    profileSchema,
+    {},
+    { normalizeOnFieldValidation: true }
+  )
+})
+```
+
+This is opt-in on purpose.
+
+#### Returning raw values on success
+
+If you want successful resolver results to return raw input values instead of normalized values, use `raw: true`:
+
+```javascript
+const form = useForm({
+  resolver: jsonRestSchemaResolver(
+    profileSchema,
+    {},
+    { raw: true }
+  )
+})
+```
+
+That applies to successful full-form validation too, so defaults and casts are not pushed into the returned `values` object.
+
+#### Error shape
+
+React Hook Form requires hierarchical nested errors for deep paths. The resolver converts the library's flat dotted-path errors into the structure RHF expects.
+
+For example, a schema error like:
+
+```javascript
+{
+  'roles.0.label': {
+    field: 'roles.0.label',
+    code: 'REQUIRED',
+    message: 'Field is required',
+    params: {}
+  }
+}
+```
+
+becomes a React Hook Form error shape equivalent to:
+
+```javascript
+{
+  roles: [
+    {
+      label: {
+        type: 'REQUIRED',
+        message: 'Field is required'
+      }
+    }
+  ]
+}
+```
+
+Direct array-field errors are placed under RHF's `root` key for that field array path.
+
+#### Native browser validation
+
+The resolver also respects React Hook Form's `shouldUseNativeValidation` option. If RHF asks for native validation, the adapter sets `setCustomValidity()` / `reportValidity()` using the schema error messages.
+
+### Vue + Vuetify Adapters
+
+If you use Vue, this package now ships a small adapter layer as two separate subpath exports:
+
+```javascript
+import { useSchemaForm, useSchemaField } from 'json-rest-schema/vue'
+import { createVuetifyRule, fieldProps, getVuetifyErrorMessages } from 'json-rest-schema/vuetify'
+```
+
+That split is intentional.
+
+* `json-rest-schema/vue` handles schema-aware form orchestration
+* `json-rest-schema/vuetify` handles Vuetify-friendly `rules` and `error-messages` bridges
+* the core schema engine stays framework-agnostic
+
+Just as important: these adapters do **not** import Vue or Vuetify internally.
+
+They work with:
+
+* plain objects
+* Vue reactive proxies
+* Vue refs such as `ref({ ... })`
+
+That keeps the published package small and avoids turning Vue into a hard dependency of the core runtime.
+
+#### Basic Vue usage
+
+Use `useSchemaForm()` when you already own the form values in Vue state.
+
+```javascript
+import { reactive } from 'vue'
+import { createSchema } from 'json-rest-schema'
+import { useSchemaForm } from 'json-rest-schema/vue'
+
+const profileSchema = createSchema({
+  name: { type: 'string', required: true, minLength: 3 },
+  role: { type: 'string', defaultTo: 'guest' }
+})
+
+const values = reactive({
+  name: ''
+})
+
+const form = useSchemaForm(profileSchema, {
+  values
+})
+```
+
+If you want Vue to react to adapter-managed error or result updates, pass Vue-owned
+containers such as `ref({})`, `reactive({})`, or `ref(null)`:
+
+```javascript
+import { reactive, ref } from 'vue'
+
+const values = reactive({
+  name: ''
+})
+
+const errors = ref({})
+const lastResult = ref(null)
+
+const form = useSchemaForm(profileSchema, {
+  values,
+  errors,
+  lastResult
+})
+```
+
+That keeps reactivity in the Vue app instead of hiding framework state inside the schema library.
+
+Important behavior:
+
+* full-form validation defaults to **`create`** semantics
+* `form.validate()` returns the usual `{ validatedObject, errors }`
+* `form.errors` stays in the library's flat dotted-path format
+* `form.nestedErrors` gives you the nested object/array form if your Vue layer prefers it
+
+Running a full validation:
+
+```javascript
+const result = form.validate()
+```
+
+If `values` is:
+
+```javascript
+{
+  name: '  Alex  '
+}
+```
+
+then `result` will be:
+
+```javascript
+{
+  validatedObject: {
+    name: 'Alex',
+    role: 'guest'
+  },
+  errors: {}
+}
+```
+
+That is the same contract as the core schema engine. The Vue adapter does not invent a second validation format.
+
+#### Field-level validation in Vue
+
+For blur validation, wizard steps, or one-field re-validation, use the path-aware helpers.
+
+```javascript
+const fieldResult = form.validateField('name')
+const stepResult = form.validateFields(['name', 'role'])
+```
+
+This matters because the adapter validates **only the selected paths**.
+
+That means:
+
+* validating `name` does not suddenly produce `email` or `password` errors
+* nested paths such as `workspace.slug` work the same way as they do in the core APIs
+* bracket paths such as `roles[0].label` are accepted too
+
+If you want a path-focused helper object, use `useSchemaField()`:
+
+```javascript
+const nameField = useSchemaField(form, 'name')
+```
+
+It gives you:
+
+* `nameField.value`
+* `nameField.error`
+* `nameField.hasError`
+* `nameField.message`
+* `nameField.messages`
+* `nameField.validate()`
+* `nameField.clearError()`
+
+Example:
+
+```javascript
+nameField.validate()
+console.log(nameField.messages)
+```
+
+#### Submit normalization in Vue
+
+The clean submit path is:
+
+```javascript
+const submitProfile = form.submit((validatedObject) => {
+  return api.saveProfile(validatedObject)
+})
+```
+
+`submit()` always validates first.
+
+If validation fails:
+
+* the handler is **not** called
+* the returned value is the validation result
+* `form.errors` is updated
+
+If validation succeeds:
+
+* the handler receives the normalized `validatedObject`
+* defaults and casts are already applied
+
+This keeps the same intended split as the rest of the library:
+
+* raw values while the user is typing
+* normalized values at the submit boundary
+
+#### Edit forms and custom operations in Vue
+
+If the form is editing an existing resource, choose a different operation explicitly:
+
+```javascript
+const form = useSchemaForm(profileSchema, {
+  values,
+  operation: 'patch'
+})
+```
+
+You can also use a custom schema operation:
+
+```javascript
+const form = useSchemaForm(profileSchema, {
+  values,
+  operation: 'upsert'
+})
+```
+
+The adapter routes everything back through the schema operation registry, so custom operations behave the same way here as they do in the core runtime.
+
+#### Vuetify `rules` integration
+
+Vuetify's `rules` prop is a natural fit for path-scoped validation.
+
+```javascript
+const slugRule = createVuetifyRule(form, 'workspace.slug')
+```
+
+Then bind it to a component:
+
+```vue
+<v-text-field
+  v-model="values.workspace.slug"
+  :rules="[slugRule]"
+/>
+```
+
+That rule:
+
+* clones the current form values
+* injects the field's current candidate value at the selected path
+* runs `validateField(path, ...)`
+* returns either `true` or the schema error message
+
+So the rule stays a thin bridge. It does not re-implement validation logic.
+
+#### Vuetify `fieldProps()` helper
+
+If you want a compact helper for Vuetify inputs, use `fieldProps()`:
+
+```javascript
+const slugProps = fieldProps(form, 'workspace.slug')
+```
+
+Then:
+
+```vue
+<v-text-field
+  v-model="values.workspace.slug"
+  v-bind="slugProps"
+/>
+```
+
+By default, `fieldProps()` returns only a `rules` array.
+
+That default is deliberate. Vuetify merges `error-messages` with rule-generated messages, so returning both by default would duplicate the same message on screen.
+
+If you explicitly want manual `error-messages` too, opt in:
+
+```javascript
+const slugProps = fieldProps(form, 'workspace.slug', {
+  includeErrorMessages: true
+})
+```
+
+That adds:
+
+* `errorMessages`
+* `error`
+
+on top of the generated `rules`.
+
+#### Manual Vuetify error messages
+
+If you only want the message bridge without generated rules, use `getVuetifyErrorMessages()` directly:
+
+```javascript
+const messages = getVuetifyErrorMessages(form, 'workspace.slug')
+```
+
+Then:
+
+```vue
+<v-text-field
+  v-model="values.workspace.slug"
+  :error-messages="getVuetifyErrorMessages(form, 'workspace.slug')"
+/>
+```
+
+This is useful when:
+
+* you validate on submit instead of on blur/input
+* you already ran `form.validate()` or `form.validateField()`
+* you want Vuetify to display stored schema errors without re-running rules immediately
+
+#### Worked Vue + Vuetify example
+
+```javascript
+import { reactive } from 'vue'
+import { createSchema } from 'json-rest-schema'
+import { useSchemaForm, useSchemaField } from 'json-rest-schema/vue'
+import { fieldProps } from 'json-rest-schema/vuetify'
+
+const workspaceSummarySchema = createSchema({
+  id: { type: 'id', required: true },
+  slug: { type: 'string', required: true, minLength: 3 },
+  ownerUserId: { type: 'id', required: true }
+})
+
+const workspaceSchema = createSchema({
+  workspace: {
+    type: 'object',
+    required: true,
+    schema: workspaceSummarySchema
+  }
+})
+
+const values = reactive({
+  workspace: {
+    slug: ''
+  }
+})
+
+const form = useSchemaForm(workspaceSchema, {
+  values,
+  operation: 'patch'
+})
+
+const slugField = useSchemaField(form, 'workspace.slug')
+const slugProps = fieldProps(form, 'workspace.slug')
+
+const saveWorkspace = form.submit(async (validatedObject) => {
+  await api.saveWorkspace(validatedObject)
+})
+```
+
+```vue
+<template>
+  <v-form @submit.prevent="saveWorkspace">
+    <v-text-field
+      v-model="values.workspace.slug"
+      label="Workspace slug"
+      v-bind="slugProps"
+      @blur="slugField.validate()"
+    />
+
+    <v-btn type="submit">Save</v-btn>
+  </v-form>
+</template>
+```
+
+That example preserves the intended layering:
+
+* the schema owns normalization and validation
+* Vue owns local form state
+* Vuetify owns rendering and input UX
+* submit handlers own business logic and API calls
+
+### Demo Apps and Browser Smoke Tests
+
+This repo now includes two minimal demo apps documented in `demos/README.md`:
+
+* `demos/react-rhf`
+* `demos/vue-vuetify`
+
+They alias package imports back to the local source files in this checkout, so they
+always exercise the current repo state instead of a published npm copy.
+
+What each demo proves:
+
+* `demos/react-rhf`: the React Hook Form resolver works in a real browser app, and the submit flow can still perform one final canonical schema pass before handing the payload to your API layer.
+* `demos/vue-vuetify`: the Vue and Vuetify adapters work in a real browser app, including visible Vuetify controls, blur validation, and normalized submit output.
+
+To install and run them:
+
+```bash
+npm run demo:install
+```
+
+Then in separate terminals:
+
+```bash
+npm run demo:react
+npm run demo:vue
+```
+
+Vite will print the local URLs it chose. If the default port is busy, it will pick the next open one automatically.
+
+To run the browser smoke tests:
+
+```bash
+npx playwright install chromium
+npm run test:demos
+```
+
+The Playwright coverage is intentionally small and concrete:
+
+* the React demo validates through the RHF resolver and performs one final canonical schema submit
+* the Vue demo validates through the Vue and Vuetify adapters and submits a normalized payload in a real browser runtime
+
+Small troubleshooting notes:
+
+* If a Vuetify control appears blank, make sure you ran the Vue demo's local install step. The demo now declares and imports the Material Design icon font explicitly.
+* If Playwright complains about missing browsers, run `npx playwright install chromium` once from the repo root.
+
+### VeeValidate v5 Bridge
+
+VeeValidate v5 accepts Standard Schema-compatible validators as `validationSchema`.
+
+That means `json-rest-schema` does not need a heavy VeeValidate-specific runtime adapter. This package now ships a small bridge that wraps a schema instance in the Standard Schema interface VeeValidate already understands.
+
+Import it like this:
+
+```javascript
+import { useForm } from 'vee-validate'
+import { createSchema } from 'json-rest-schema'
+import { toVeeValidateSchema } from 'json-rest-schema/vee-validate'
+```
+
+#### Basic usage
+
+```javascript
+const profileSchema = createSchema({
+  name: { type: 'string', required: true, minLength: 3 },
+  role: { type: 'string', defaultTo: 'guest' }
+})
+
+const { handleSubmit, errors, values } = useForm({
+  initialValues: {
+    name: ''
+  },
+  validationSchema: toVeeValidateSchema(profileSchema)
+})
+```
+
+That default bridge uses **`create` semantics**.
+
+So on successful submit:
+
+* required fields are enforced
+* normalized values are returned
+* defaults are applied to the submitted output
+
+If the user submits:
+
+```javascript
+{
+  name: '  Alex  '
+}
+```
+
+then the validated submit payload is equivalent to:
+
+```javascript
+{
+  name: 'Alex',
+  role: 'guest'
+}
+```
+
+#### Edit forms and custom operations
+
+If the form is editing an existing resource, pass the operation explicitly:
+
+```javascript
+const { handleSubmit } = useForm({
+  initialValues,
+  validationSchema: toVeeValidateSchema(profileSchema, {
+    operation: 'patch'
+  })
+})
+```
+
+Custom operations work too:
+
+```javascript
+const { handleSubmit } = useForm({
+  initialValues,
+  validationSchema: toVeeValidateSchema(profileSchema, {
+    operation: 'upsert'
+  })
+})
+```
+
+#### Important VeeValidate limitation: defaults do not initialize form state
+
+This is important enough to say clearly:
+
+* the bridge validates and normalizes the schema output
+* VeeValidate still expects you to provide your own `initialValues`
+* schema defaults do **not** automatically populate the form's starting state
+
+So this is the intended split:
+
+* `initialValues` controls the raw form state
+* `toVeeValidateSchema(...)` controls validation and normalized submit output
+
+If you want a default field visible in the UI before submit, put it in `initialValues`.
+
+If you only want the normalized payload to contain the default when the user submits, let the schema apply it.
+
+#### Error paths
+
+The bridge turns the library's flat error map into Standard Schema issues with nested paths.
+
+So an internal error like:
+
+```javascript
+{
+  'roles.0.label': {
+    field: 'roles.0.label',
+    code: 'REQUIRED',
+    message: 'Field is required',
+    params: {}
+  }
+}
+```
+
+becomes Standard Schema issues equivalent to:
+
+```javascript
+[
+  {
+    message: 'Field is required',
+    path: ['roles', 0, 'label']
+  }
+]
+```
+
+That is what lets VeeValidate map nested array/object errors back onto the right field state.
+
+#### Worked VeeValidate example
+
+```javascript
+import { useForm } from 'vee-validate'
+import { createSchema } from 'json-rest-schema'
+import { toVeeValidateSchema } from 'json-rest-schema/vee-validate'
+
+const workspaceSummarySchema = createSchema({
+  id: { type: 'id', required: true },
+  slug: { type: 'string', required: true, minLength: 3 },
+  ownerUserId: { type: 'id', required: true }
+})
+
+const workspaceSchema = createSchema({
+  workspace: {
+    type: 'object',
+    required: true,
+    schema: workspaceSummarySchema
+  }
+})
+
+const { defineField, handleSubmit, errors } = useForm({
+  initialValues: {
+    workspace: {
+      slug: ''
+    }
+  },
+  validationSchema: toVeeValidateSchema(workspaceSchema, {
+    operation: 'patch'
+  })
+})
+
+const [slug, slugAttrs] = defineField('workspace.slug')
+
+const saveWorkspace = handleSubmit((validatedObject) => {
+  return api.saveWorkspace(validatedObject)
+})
+```
+
+```vue
+<template>
+  <form @submit.prevent="saveWorkspace">
+    <input v-model="slug" v-bind="slugAttrs">
+    <span>{{ errors['workspace.slug'] }}</span>
+    <button type="submit">Save</button>
+  </form>
+</template>
+```
+
+This keeps the responsibilities clean:
+
+* VeeValidate owns touched/dirty/submit orchestration
+* `json-rest-schema` owns validation and normalization
+* your submit handler owns business logic
 
 ### Transport JSON Schema Export
 

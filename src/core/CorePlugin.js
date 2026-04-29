@@ -3,7 +3,6 @@
  */
 
 import * as flatted from 'flatted'
-import { isDeepStrictEqual } from 'node:util'
 
 /**
  * @typedef {import('./Schema.js').ValidationContext} ValidationContext
@@ -36,6 +35,54 @@ function normalizeFiniteNumberInput (value) {
   }
 
   return null
+}
+
+function deepEqual (left, right) {
+  if (Object.is(left, right)) return true
+
+  if (left instanceof Date && right instanceof Date) {
+    return left.getTime() === right.getTime()
+  }
+
+  if (left instanceof RegExp && right instanceof RegExp) {
+    return left.source === right.source && left.flags === right.flags
+  }
+
+  if (Array.isArray(left) || Array.isArray(right)) {
+    if (!Array.isArray(left) || !Array.isArray(right)) return false
+    if (left.length !== right.length) return false
+
+    for (let index = 0; index < left.length; index++) {
+      if (!deepEqual(left[index], right[index])) return false
+    }
+
+    return true
+  }
+
+  if (
+    left === null ||
+    right === null ||
+    typeof left !== 'object' ||
+    typeof right !== 'object'
+  ) {
+    return false
+  }
+
+  if (Object.getPrototypeOf(left) !== Object.getPrototypeOf(right)) {
+    return false
+  }
+
+  const leftKeys = Object.keys(left)
+  const rightKeys = Object.keys(right)
+
+  if (leftKeys.length !== rightKeys.length) return false
+
+  for (const key of leftKeys) {
+    if (!Object.hasOwn(right, key)) return false
+    if (!deepEqual(left[key], right[key])) return false
+  }
+
+  return true
 }
 
 /**
@@ -315,10 +362,31 @@ const CorePlugin = {
         throw new Error(`Enum for ${context.fieldName} must be an array.`)
       }
 
-      const matches = context.parameterValue.some(allowedValue => isDeepStrictEqual(allowedValue, context.value))
+      const matches = context.parameterValue.some(allowedValue => deepEqual(allowedValue, context.value))
       if (!matches) {
         context.throwParamError('ENUM_VALUE', 'Value must match one of the allowed enum values.', {
           allowed: context.parameterValue
+        })
+      }
+    })
+    addValidator('pattern', context => {
+      if (context.value === undefined) return
+      if (context.definition.type !== 'string' || typeof context.value !== 'string') return
+
+      const patternValue = context.parameterValue
+      const matcher = patternValue instanceof RegExp
+        ? patternValue
+        : typeof patternValue === 'string'
+          ? new RegExp(patternValue)
+          : null
+
+      if (!matcher) {
+        throw new Error(`Pattern for ${context.fieldName} must be a string or RegExp.`)
+      }
+
+      if (!matcher.test(context.value)) {
+        context.throwParamError('PATTERN', 'Value does not match the required pattern.', {
+          pattern: matcher.source
         })
       }
     })

@@ -15,7 +15,7 @@
   ],
   "author": "Tony Mobily",
   "license": "GPL-3.0-only",
-  "homepage": "https://mobily-enterprises/jsonrestapi-schema#readme",
+  "homepage": "https://mobily-enterprises.github.io/jsonrestapi-schema/",
   "repository": {
     "type": "git",
     "url": "git+https://mobily-enterprises/jsonrestapi-schema.git"
@@ -26,7 +26,11 @@
   "type": "module",
   "main": "src/index.js",
   "exports": {
-    ".": "./src/index.js"
+    ".": "./src/index.js",
+    "./react-hook-form": "./src/adapters/react-hook-form.js",
+    "./vue": "./src/adapters/vue.js",
+    "./vuetify": "./src/adapters/vuetify.js",
+    "./vee-validate": "./src/adapters/vee-validate.js"
   },
   "files": [
     "src/",
@@ -36,8 +40,15 @@
   ],
   "scripts": {
     "test": "node --test tests.js",
+    "test:demos": "playwright test",
     "example": "node example.js",
     "start": "node example.js",
+    "docs:dev": "vitepress dev docs",
+    "docs:build": "vitepress build docs",
+    "docs:preview": "vitepress preview docs",
+    "demo:install": "npm install --prefix demos/react-rhf && npm install --prefix demos/vue-vuetify",
+    "demo:react": "npm --prefix demos/react-rhf run dev",
+    "demo:vue": "npm --prefix demos/vue-vuetify run dev",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix"
   },
@@ -45,10 +56,12 @@
     "flatted": "^3.3.3"
   },
   "devDependencies": {
+    "@playwright/test": "^1.54.2",
     "eslint": "^9.37.0",
     "knex": "^3.1.0",
     "neostandard": "^0.12.2",
-    "sqlite3": "^5.1.7"
+    "sqlite3": "^5.1.7",
+    "vitepress": "^1.6.4"
   },
   "engines": {
     "node": ">=18.0.0"

@@ -46,8 +46,23 @@ function isSchemaInstance (value) {
   return value instanceof Schema
 }
 
+function createSelectionNode () {
+  return {
+    self: false,
+    children: {}
+  }
+}
+
+function hasSelectionChildren (selectionNode) {
+  return Object.keys(selectionNode.children).length > 0
+}
+
 function joinPath (basePath, pathSegment) {
   return `${basePath}.${String(pathSegment)}`
+}
+
+function buildFieldPath (basePath, fieldName) {
+  return basePath === '' ? String(fieldName) : joinPath(basePath, fieldName)
 }
 
 function stripPathPrefix (path, prefix) {
@@ -68,6 +83,76 @@ function prefixErrorMap (errors, prefix) {
   }
 
   return prefixedErrors
+}
+
+function buildPathSegments (path) {
+  if (typeof path !== 'string' || path.trim() === '') {
+    throw new Error('Validation path must be a non-empty string.')
+  }
+
+  const segments = path.split('.')
+  if (segments.some(segment => segment === '')) {
+    throw new Error(`Validation path "${path}" is invalid.`)
+  }
+
+  return segments
+}
+
+function buildSelectionTree (paths) {
+  const selectionTree = {}
+
+  for (const path of paths) {
+    const segments = buildPathSegments(path)
+    let currentTree = selectionTree
+
+    for (let index = 0; index < segments.length; index++) {
+      const segment = segments[index]
+
+      if (!currentTree[segment]) {
+        currentTree[segment] = createSelectionNode()
+      }
+
+      if (index === segments.length - 1) {
+        currentTree[segment].self = true
+      }
+
+      currentTree = currentTree[segment].children
+    }
+  }
+
+  return selectionTree
+}
+
+function getValueAtPath (value, pathSegments) {
+  let currentValue = value
+
+  for (const segment of pathSegments) {
+    if (currentValue === null || currentValue === undefined) return undefined
+    if (typeof currentValue !== 'object') return undefined
+    if (!Object.hasOwn(currentValue, segment)) return undefined
+    currentValue = currentValue[segment]
+  }
+
+  return currentValue
+}
+
+function hasSelectedValue (value) {
+  if (value === null) return true
+  if (Array.isArray(value)) return Object.keys(value).length > 0
+  if (isPlainObject(value)) return Object.keys(value).length > 0
+  return value !== undefined
+}
+
+function sortSelectionKeys (keys) {
+  return [...keys].sort((left, right) => {
+    const leftIsIndex = /^[0-9]+$/.test(left)
+    const rightIsIndex = /^[0-9]+$/.test(right)
+
+    if (leftIsIndex && rightIsIndex) return Number(left) - Number(right)
+    if (leftIsIndex) return -1
+    if (rightIsIndex) return 1
+    return left.localeCompare(right)
+  })
 }
 
 function buildNestedOptions (options, prefix) {
@@ -175,6 +260,13 @@ function normalizeOperations (operations = {}) {
   return Object.freeze(normalizedOperations)
 }
 
+function cloneValidationOptions (options) {
+  const validationOptions = { ...options }
+  delete validationOptions.operation
+  delete validationOptions.mode
+  return validationOptions
+}
+
 /**
  * Represents an instance of a schema that can validate objects against a structure.
  * This class is instantiated by the createSchema factory function.
@@ -262,6 +354,33 @@ export class Schema {
   }
 
   /** @private */
+  _assertPlainObjectInput (methodName, object) {
+    if (!isPlainObject(object)) {
+      throw new Error(`${methodName}() expects a plain object input.`)
+    }
+  }
+
+  /** @private */
+  _resolvePathValidationRequest (options = {}) {
+    const operationName = options.operation ?? options.mode ?? 'patch'
+
+    if (Object.hasOwn(options, 'operation') && Object.hasOwn(options, 'mode') && options.operation !== options.mode) {
+      throw new Error('Path validation options `operation` and `mode` must match when both are provided.')
+    }
+
+    const operation = this.operations[operationName]
+    if (!operation) {
+      throw new Error(`Unknown operation "${operationName}".`)
+    }
+
+    return {
+      operationName,
+      operation,
+      validationOptions: cloneValidationOptions(options)
+    }
+  }
+
+  /** @private */
   _buildOperationResult (object, workingObject, settings) {
     const validatedObject = {}
 
@@ -342,27 +461,30 @@ export class Schema {
   }
 
   /** @private */
-  _normalizeAndValidateValue (definition, rawValue, fieldPath, currentObject, containerKey, objectBeforeCast, options, settings) {
+  _castValue (definition, rawValue, fieldPath, currentObject, containerKey, objectBeforeCast, options, settings) {
     const nullable = definition.nullable === true || options.nullable === true
     const nullOnEmpty = definition.nullOnEmpty === true || options.nullOnEmpty === true
 
     if (rawValue === null) {
       if (nullable) {
         currentObject[containerKey] = null
-        return {}
+        return { errors: {}, shouldContinue: false }
       }
 
-      return this._singleErrorMap({
-        field: fieldPath,
-        code: 'NOT_NULLABLE',
-        message: 'Field cannot be null',
-        params: {}
-      })
+      return {
+        errors: this._singleErrorMap({
+          field: fieldPath,
+          code: 'NOT_NULLABLE',
+          message: 'Field cannot be null',
+          params: {}
+        }),
+        shouldContinue: false
+      }
     }
 
     if (String(rawValue) === '' && nullOnEmpty) {
       currentObject[containerKey] = null
-      return {}
+      return { errors: {}, shouldContinue: false }
     }
 
     /** @type {ValidationContext} */
@@ -402,17 +524,25 @@ export class Schema {
         context.value = castResult
       }
     } catch (e) {
-      if (e.errorObject) return this._singleErrorMap(e.errorObject)
+      if (e.errorObject) {
+        return {
+          errors: this._singleErrorMap(e.errorObject),
+          shouldContinue: false
+        }
+      }
+
       throw e
     }
 
-    const nestedErrors = this._validateNestedValue(definition, fieldPath, currentObject, containerKey, options, settings)
-    if (Object.keys(nestedErrors).length > 0) {
-      return nestedErrors
+    return {
+      errors: {},
+      context,
+      shouldContinue: true
     }
+  }
 
-    context.value = currentObject[containerKey]
-
+  /** @private */
+  _runFieldValidators (definition, fieldPath, currentObject, containerKey, context, options) {
     for (const paramName in definition) {
       if (paramName === 'type') continue
       if (this._paramToBeSkipped(paramName, options.skipParams, fieldPath)) continue
@@ -438,6 +568,23 @@ export class Schema {
     }
 
     return {}
+  }
+
+  /** @private */
+  _normalizeAndValidateValue (definition, rawValue, fieldPath, currentObject, containerKey, objectBeforeCast, options, settings) {
+    const castResult = this._castValue(definition, rawValue, fieldPath, currentObject, containerKey, objectBeforeCast, options, settings)
+    if (Object.keys(castResult.errors).length > 0) return castResult.errors
+    if (!castResult.shouldContinue) return {}
+
+    const { context } = castResult
+
+    const nestedErrors = this._validateNestedValue(definition, fieldPath, currentObject, containerKey, options, settings)
+    if (Object.keys(nestedErrors).length > 0) {
+      return nestedErrors
+    }
+
+    context.value = currentObject[containerKey]
+    return this._runFieldValidators(definition, fieldPath, currentObject, containerKey, context, options)
   }
 
   /** @private */
@@ -591,6 +738,283 @@ export class Schema {
     }
   }
 
+  /** @private */
+  _validateSelectedTree (selectionTree, object, options, settings, basePath = '') {
+    const errors = {}
+    const validatedObject = {}
+
+    for (const fieldName of sortSelectionKeys(Object.keys(selectionTree))) {
+      const fieldPath = buildFieldPath(basePath, fieldName)
+      const definition = this.structure[fieldName]
+
+      if (!definition) {
+        throw new Error(`Unknown schema path "${fieldPath}".`)
+      }
+
+      const fieldErrors = this._validateSelectedField(
+        fieldName,
+        selectionTree[fieldName],
+        object,
+        validatedObject,
+        options,
+        settings,
+        fieldPath
+      )
+
+      this._mergeErrors(errors, fieldErrors)
+    }
+
+    return { validatedObject, errors }
+  }
+
+  /** @private */
+  _validateSelectedField (fieldName, selectionNode, object, validatedObject, options, settings, fieldPath) {
+    const definition = this.structure[fieldName]
+    const exactSelected = selectionNode.self === true
+    const hasChildren = hasSelectionChildren(selectionNode)
+
+    if (this._fieldToBeSkipped(fieldPath, options)) return {}
+
+    const fieldPresent = Object.hasOwn(object, fieldName)
+    const rawValue = object[fieldName]
+    const errors = {}
+
+    if (!fieldPresent) {
+      if (exactSelected && settings.enforceRequired && definition.required && !this._paramToBeSkipped('required', options.skipParams, fieldPath)) {
+        this._mergeErrors(errors, this._singleErrorMap({
+          field: fieldPath,
+          code: 'REQUIRED',
+          message: 'Field is required',
+          params: {}
+        }))
+      }
+
+      if (exactSelected && settings.applyDefaults && definition.defaultTo !== undefined) {
+        const defaultValue = typeof definition.defaultTo === 'function' ? definition.defaultTo() : definition.defaultTo
+        validatedObject[fieldName] = defaultValue
+      }
+
+      return errors
+    }
+
+    if (rawValue === undefined) {
+      if (exactSelected && settings.rejectExplicitUndefined) {
+        return this._singleErrorMap(this._typeError(fieldPath).errorObject)
+      }
+
+      return {}
+    }
+
+    const currentObject = { [fieldName]: rawValue }
+
+    if (exactSelected) {
+      const fieldErrors = this._normalizeAndValidateValue(
+        definition,
+        rawValue,
+        fieldPath,
+        currentObject,
+        fieldName,
+        object,
+        options,
+        settings
+      )
+
+      if (Object.hasOwn(currentObject, fieldName) && currentObject[fieldName] !== undefined) {
+        validatedObject[fieldName] = currentObject[fieldName]
+      } else if (currentObject[fieldName] === null) {
+        validatedObject[fieldName] = null
+      }
+
+      return fieldErrors
+    }
+
+    if (!hasChildren) return {}
+
+    const castResult = this._castValue(definition, rawValue, fieldPath, currentObject, fieldName, object, options, settings)
+    if (Object.keys(castResult.errors).length > 0) {
+      return castResult.errors
+    }
+
+    if (!castResult.shouldContinue) return {}
+
+    const nestedResult = this._validateSelectedDescendants(
+      definition,
+      selectionNode.children,
+      fieldPath,
+      currentObject,
+      fieldName,
+      options,
+      settings
+    )
+
+    if (hasSelectedValue(currentObject[fieldName])) {
+      validatedObject[fieldName] = currentObject[fieldName]
+    }
+
+    return nestedResult
+  }
+
+  /** @private */
+  _validateSelectedDescendants (definition, selectionTree, fieldPath, currentObject, containerKey, options, settings) {
+    if (definition.type === 'object') {
+      const objectMode = this._resolveObjectFieldMode(fieldPath, definition)
+      if (objectMode.kind !== 'nested') {
+        throw new Error(`Schema path "${fieldPath}" does not support nested field selection.`)
+      }
+
+      const nestedValue = currentObject[containerKey]
+      if (!isPlainObject(nestedValue)) return {}
+
+      const nestedResult = objectMode.schema._validateSelectedTree(
+        selectionTree,
+        nestedValue,
+        buildNestedOptions(options, fieldPath),
+        {
+          ...settings,
+          defaultedFields: new Set()
+        }
+      )
+
+      currentObject[containerKey] = nestedResult.validatedObject
+      return prefixErrorMap(nestedResult.errors, fieldPath)
+    }
+
+    if (definition.type === 'array') {
+      const itemsConfig = this._resolveArrayItemsConfig(fieldPath, definition)
+      if (!itemsConfig) {
+        throw new Error(`Schema path "${fieldPath}" does not define array items for nested selection.`)
+      }
+
+      return this._validateSelectedArrayItems(fieldPath, currentObject, containerKey, itemsConfig, selectionTree, options, settings)
+    }
+
+    throw new Error(`Schema path "${fieldPath}" does not support nested field selection.`)
+  }
+
+  /** @private */
+  _validateSelectedArrayItems (fieldPath, currentObject, containerKey, itemsConfig, selectionTree, options, settings) {
+    const normalizedItems = []
+    const sourceItems = currentObject[containerKey]
+    const errors = {}
+
+    currentObject[containerKey] = normalizedItems
+
+    for (const indexKey of sortSelectionKeys(Object.keys(selectionTree))) {
+      if (!/^[0-9]+$/.test(indexKey)) {
+        throw new Error(`Schema path "${joinPath(fieldPath, indexKey)}" is invalid because array segments must use numeric indexes.`)
+      }
+
+      const index = Number(indexKey)
+      const itemPath = joinPath(fieldPath, index)
+      const selectionNode = selectionTree[indexKey]
+      const exactSelected = selectionNode.self === true
+      const hasChildren = hasSelectionChildren(selectionNode)
+
+      if (this._fieldToBeSkipped(itemPath, options)) continue
+      if (!Object.hasOwn(sourceItems, index)) continue
+
+      const rawValue = sourceItems[index]
+      if (rawValue === undefined) {
+        if (exactSelected && settings.rejectExplicitUndefined) {
+          errors[itemPath] = this._typeError(itemPath).errorObject
+        }
+        continue
+      }
+
+      if (itemsConfig.kind === 'schema') {
+        if (exactSelected) {
+          const itemResult = itemsConfig.schema._validateWithOperation(
+            'replace',
+            itemsConfig.schema.operations.replace,
+            rawValue,
+            buildNestedOptions(options, itemPath)
+          )
+
+          if (hasSelectedValue(itemResult.validatedObject)) {
+            normalizedItems[index] = itemResult.validatedObject
+          }
+
+          this._mergeErrors(errors, prefixErrorMap(itemResult.errors, itemPath))
+          continue
+        }
+
+        if (!hasChildren) continue
+
+        const itemResult = itemsConfig.schema._validateSelectedTree(
+          selectionNode.children,
+          rawValue,
+          buildNestedOptions(options, itemPath),
+          {
+            ...settings,
+            operationName: 'replace',
+            operation: itemsConfig.schema.operations.replace,
+            defaultedFields: new Set()
+          }
+        )
+
+        if (hasSelectedValue(itemResult.validatedObject)) {
+          normalizedItems[index] = itemResult.validatedObject
+        }
+
+        this._mergeErrors(errors, prefixErrorMap(itemResult.errors, itemPath))
+        continue
+      }
+
+      const itemSettings = this._buildArrayItemSettings(itemsConfig.definition, settings)
+      const itemHolder = [rawValue]
+
+      if (exactSelected) {
+        const itemErrors = this._normalizeAndValidateValue(
+          itemsConfig.definition,
+          rawValue,
+          itemPath,
+          itemHolder,
+          0,
+          sourceItems,
+          options,
+          itemSettings
+        )
+
+        if (Object.hasOwn(itemHolder, 0) && itemHolder[0] !== undefined) {
+          normalizedItems[index] = itemHolder[0]
+        } else if (itemHolder[0] === null) {
+          normalizedItems[index] = null
+        }
+
+        this._mergeErrors(errors, itemErrors)
+        continue
+      }
+
+      if (!hasChildren) continue
+
+      const castResult = this._castValue(itemsConfig.definition, rawValue, itemPath, itemHolder, 0, sourceItems, options, itemSettings)
+      if (Object.keys(castResult.errors).length > 0) {
+        this._mergeErrors(errors, castResult.errors)
+        continue
+      }
+
+      if (!castResult.shouldContinue) continue
+
+      const itemErrors = this._validateSelectedDescendants(
+        itemsConfig.definition,
+        selectionNode.children,
+        itemPath,
+        itemHolder,
+        0,
+        options,
+        itemSettings
+      )
+
+      if (hasSelectedValue(itemHolder[0])) {
+        normalizedItems[index] = itemHolder[0]
+      }
+
+      this._mergeErrors(errors, itemErrors)
+    }
+
+    return errors
+  }
+
   // --- Public API ---
 
   /**
@@ -607,6 +1031,56 @@ export class Schema {
     }
 
     return this._validateWithOperation(operationName, operation, object, options)
+  }
+
+  /**
+   * Validates a single schema path against the selected operation.
+   * Defaults to `patch` semantics when no operation is specified.
+   * @param {string} path - A dotted schema path such as `email` or `workspace.slug`.
+   * @param {object} object - The input object to validate.
+   * @param {{operation?: string, mode?: string}} [options={}] - Path validation options.
+   * @returns {{validatedValue: any, errors: Object.<string, ValidationError>}}
+   */
+  validateAt (path, object, options = {}) {
+    this._assertPlainObjectInput('validateAt', object)
+
+    const pathSegments = buildPathSegments(path)
+    const { operationName, operation, validationOptions } = this._resolvePathValidationRequest(options)
+    const result = this._validateSelectedTree(
+      buildSelectionTree([path]),
+      object,
+      validationOptions,
+      this._buildOperationSettings(operationName, operation, object)
+    )
+
+    return {
+      validatedValue: getValueAtPath(result.validatedObject, pathSegments),
+      errors: result.errors
+    }
+  }
+
+  /**
+   * Validates a selected set of schema paths against the chosen operation.
+   * Defaults to `patch` semantics when no operation is specified.
+   * @param {string[]} paths - A list of dotted schema paths.
+   * @param {object} object - The input object to validate.
+   * @param {{operation?: string, mode?: string}} [options={}] - Path validation options.
+   * @returns {{validatedObject: object, errors: Object.<string, ValidationError>}}
+   */
+  validatePaths (paths, object, options = {}) {
+    this._assertPlainObjectInput('validatePaths', object)
+
+    if (!Array.isArray(paths) || paths.length === 0) {
+      throw new Error('validatePaths() expects a non-empty array of schema paths.')
+    }
+
+    const { operationName, operation, validationOptions } = this._resolvePathValidationRequest(options)
+    return this._validateSelectedTree(
+      buildSelectionTree(paths),
+      object,
+      validationOptions,
+      this._buildOperationSettings(operationName, operation, object)
+    )
   }
 
   /**

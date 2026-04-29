@@ -22,7 +22,18 @@ Because of that last point, this library owns typing, casting, normalization, an
 
 Let's walk through the main components and how they interact:
 
-### 2.1. `./src/index.js` - The Brains of the Operation
+### 2.1. `./src/` Layout
+
+The source tree now stays intentionally shallow:
+
+* `./src/index.js` is the public entry point
+* `./src/core/` contains the runtime validation engine and transport export
+* `./src/utils/` contains shared helper utilities
+* `./src/adapters/` contains optional UI-library integration layers
+
+That split is deliberate. It is enough structure to keep responsibilities easy to find, without turning a small library into a directory maze.
+
+### 2.2. `./src/index.js` - The Main Entry Point
 
 This file is the true heart and soul of the library. It acts as the central coordinator, managing the global collection of type and validator handlers, and providing the primary interface for users.
 
@@ -45,7 +56,7 @@ This file is the true heart and soul of the library. It acts as the central coor
 
 * **The Schema Factory (`createSchema`):**
     * The `createSchema(structure, options)` factory function is the primary way users will interact with the library to define a new schema.
-    * When you call `createSchema({ /* your schema definition */ })`, it doesn't return some intermediary manager. Instead, it directly instantiates a new `Schema` object (from `./src/Schema.js`).
+    * When you call `createSchema({ /* your schema definition */ })`, it doesn't return some intermediary manager. Instead, it directly instantiates a new `Schema` object (from `./src/core/Schema.js`).
     * **Crucially, it passes the *current references* to our `globalTypes` and `globalValidators` objects to the new `Schema` instance's constructor**, along with any per-schema operation descriptors. This means every `Schema` object created will automatically be "aware" of all the types and validators that have been registered globally up to that point.
 
 * **The Public API (`createSchema.addType`, `createSchema.addValidator`, `createSchema.use`):**
@@ -61,7 +72,7 @@ This file is the true heart and soul of the library. It acts as the central coor
     * Right before the final export, `index.js` explicitly calls `createSchema.use(CorePlugin);`.
     * This ensures that as soon as your application imports `json-rest-schema`, all the built-in types (like `string`, `number`, `boolean`) and validators (like `min`, `max`, `required`) are automatically registered and ready for use. No extra setup step is required for basic functionality.
 
-### 2.2. `./src/Schema.js` - The Validation Workhorse
+### 2.3. `./src/core/Schema.js` - The Validation Workhorse
 
 While `index.js` manages the global registries, the `Schema` class is where the actual validation magic happens for a *specific* schema definition.
 
@@ -78,6 +89,7 @@ While `index.js` manages the global registries, the `Schema` class is where the 
 * **Recursive Validation Helpers:** After a field is cast, the `Schema` instance can recursively validate nested child schemas or array items. Nested object fields inherit the active operation contract, while array items that are object schemas are validated in `replace` mode. Errors are flattened into dotted paths such as `workspace.slug` and `roles.2.id`.
 * **Operation Methods (`create`, `replace`, `patch`, and custom aliases):** These public synchronous methods are generated from the operation registry and orchestrate validation for a whole object. They identify allowed/disallowed fields, validate fields in a plain loop, collect all errors, and apply any `defaultTo` values required by the active operation contract. Names that already exist on `Schema` are reserved, so aliases such as `validateWith`, `toJsonSchema`, or `cleanup` are rejected.
 * **`validateWith(operationName, object, options)` Method:** This is the canonical operation entry point. Generated aliases such as `create()` or `upsert()` simply delegate to it.
+* **Path-Scoped Validation (`validateAt` and `validatePaths`):** These methods reuse the same casting, validator, and nested recursion code, but they validate only the selected schema paths. They default to `patch` semantics because that is the least surprising choice for interactive field validation. Exact selected paths can still opt into `create`, `replace`, or any custom operation.
 
 **A concrete mental model for nested validation:**
 
@@ -92,7 +104,17 @@ While `index.js` manages the global registries, the `Schema` class is where the 
 
 That sequencing is important. It means callers always see one flat `{ validatedObject, errors }` result even though the implementation is recursive.
 
-### 2.3. `./src/CorePlugin.js` - The Default Toolbox
+**A concrete mental model for path-scoped validation:**
+
+1. `validateAt()` or `validatePaths()` builds a selection tree from the requested dotted paths.
+2. The validator walks only that selected subtree.
+3. Exact selected paths can enforce `required` and apply defaults according to the chosen operation.
+4. Parent container nodes are only validated enough to support traversal into the selected child paths.
+5. Child and array-item recursion still uses the same type handlers, validator handlers, and nested schema logic as full-object validation.
+
+That is why the subset APIs stay aligned with the main engine instead of becoming a second validation system with different behavior.
+
+### 2.4. `./src/core/CorePlugin.js` - The Default Toolbox
 
 This file simply defines all the standard, built-in type and validator handlers that come with the library.
 
@@ -102,7 +124,7 @@ This file simply defines all the standard, built-in type and validator handlers 
 * **Clear Definition of Default Handlers:** It provides well-defined synchronous functions for common data transformations and validation checks, serving as excellent examples for how to write your own custom types and validators.
 * **Strict Object Ownership:** The built-in `object` type now validates that the incoming value is actually a plain object. That matters because nested contracts and opaque bags both depend on object-ness being explicit instead of being a loose pass-through.
 
-### 2.4. `./src/transport-schema.js` - Transport Export
+### 2.5. `./src/core/transport-schema.js` - Transport Export
 
 This module turns a `Schema` instance into a draft-07 JSON Schema document for transport-layer adapters.
 
@@ -121,5 +143,126 @@ We support only three nested shapes because they cover most real shared REST con
 * `type: 'object'` plus `additionalProperties: true`
 
 We intentionally do **not** support arbitrary embedded JSON Schema, `oneOf` / `anyOf`, recursive refs, or mixed known-field-plus-arbitrary-rest object semantics. That restraint is what keeps both the runtime and the docs understandable for a junior developer reading the code for the first time.
+
+### 2.6. `./src/utils/error-helpers.js` - Error Utilities
+
+This module is intentionally small. It does not validate anything. It only helps consumers work with the existing flat error contract.
+
+Current helpers:
+
+* `getError(errors, path)` for reading one dotted-path error
+* `hasError(errors, path)` for simple boolean checks
+* `nestErrors(errors)` for turning flat dotted paths into nested object/array form
+* `flattenErrors(nestedErrors)` for turning nested object/array errors back into the flat dotted-path map
+
+This split is deliberate:
+
+* the runtime keeps one stable flat error contract
+* adapters and UI layers can reshape that contract when they need to
+* the reverse helper keeps adapters from re-implementing dotted-path flattening inconsistently
+
+That lets the core stay simple without forcing every consumer into the same form-library error shape.
+
+### 2.7. `./src/adapters/react-hook-form.js` - React Hook Form Adapter
+
+This module is the first real UI-library adapter layer. It is intentionally not part of `Schema.js`.
+
+What it does:
+
+* accepts a `Schema` instance
+* maps RHF resolver calls into `validateWith()` or `validatePaths()`
+* converts flat dotted-path errors into RHF's nested error shape
+* supports RHF native validation hooks
+
+Important design choices:
+
+* **Separate entry point:** it is exported as `json-rest-schema/react-hook-form` instead of being folded into the core root API surface.
+* **Full-form validation defaults to `create`:** that gives useful required/default behavior for common create forms.
+* **Field-level re-validation uses path selection:** when RHF re-validates a subset of fields during user interaction, the adapter validates only those selected paths.
+* **Raw-by-default interaction:** field-level re-validation keeps raw values by default so normalization does not fight typing behavior. Callers can opt into normalized field-level values explicitly.
+* **Canonical submit payloads still belong to the schema boundary:** in a real RHF app, the resolver validates correctly, but RHF still owns raw field state. If callers need a canonical REST payload, they should run one final schema operation in the submit handler. The React demo shows that pattern.
+
+This is the pattern to preserve for future adapters: keep framework code thin, route everything through the existing schema engine, and do not duplicate validation rules in adapter land.
+
+### 2.8. `./src/adapters/vue.js` - Vue Form Adapter
+
+This module is the Vue-facing equivalent of the React resolver, but the shape is different because Vue does not revolve around a resolver contract.
+
+What it does:
+
+* exposes `useSchemaForm(schema, options)`
+* exposes `useSchemaField(form, path)`
+* keeps form errors in the core flat dotted-path contract
+* adds convenience getters such as `nestedErrors`, `hasErrors`, `getErrorMessages()`, and field-level helpers
+* routes full-form validation through `validateWith()`
+* routes field and subset validation through `validateField()` / `validateFields()`
+
+Important design choices:
+
+* **No direct Vue import:** this module does not import `vue`. It accepts plain objects, Vue reactive proxies, or ref-like `{ value }` containers the caller already owns.
+* **Full-form validation defaults to `create`:** the adapter mirrors the same default as the React resolver for the common create-form case.
+* **Selected-path error merging:** field-level validation clears and replaces only the selected path errors. It does not wipe unrelated form errors every time a single field is re-validated.
+* **Raw-state ownership stays in the app:** the adapter validates and normalizes, but it does not take over UI state management.
+* **Reactivity stays caller-owned:** if a Vue app wants reactive error/result updates, it should pass Vue refs or reactive containers through `errors` / `lastResult` instead of expecting hidden Vue state inside the adapter.
+
+That last point matters. This file is meant to help Vue forms use the schema layer cleanly, not to become a form state framework.
+
+### 2.9. `./src/adapters/vuetify.js` - Vuetify Bridge
+
+This module is intentionally even smaller than `./src/adapters/vue.js`.
+
+What it does:
+
+* exposes `createVuetifyRule(form, path)`
+* exposes `getVuetifyErrorMessages(formOrErrors, path)`
+* exposes `fieldProps(form, path, options)`
+
+Important design choices:
+
+* **Thin bridge only:** these helpers translate schema results into Vuetify's `rules` and `error-messages` conventions. They do not own validation logic themselves.
+* **`fieldProps()` defaults to `rules` only:** Vuetify merges manual `error-messages` with rule-generated messages, so returning both by default would duplicate the same message on screen.
+* **Schema remains the source of truth:** the rule helper clones the current form values, injects the candidate field value, and then calls the existing Vue form adapter. That keeps all normalization and validation behavior in one place.
+
+This separation is worth preserving. The Vuetify layer should stay as glue code, not as a second validation implementation.
+
+### 2.10. `./demos/` and `./playwright.config.js` - Runtime Demo Coverage
+
+The demo apps live outside the publishable package surface and exist to prove the adapters in real browser runtimes.
+
+What they do:
+
+* `./demos/react-rhf` exercises the React Hook Form resolver in a browser app
+* `./demos/vue-vuetify` exercises the Vue and Vuetify adapters in a browser app
+* `./demos/shared/workspace-demo-schema.js` keeps both demos on the same contract
+* `./playwright.config.js` starts both Vite dev servers and runs smoke tests against them
+
+Important design choices:
+
+* **Local source aliasing:** each demo aliases `json-rest-schema` imports back to the local `src/` files, so the demos always test the current checkout.
+* **Shallow scope:** these are runtime proofs, not starter kits.
+* **Browser-first verification:** Playwright exists here to catch issues unit tests will miss, such as Node-only imports leaking into the shared contract runtime.
+
+### 2.11. `./src/adapters/vee-validate.js` - VeeValidate v5 Bridge
+
+This module is smaller still.
+
+VeeValidate v5 already accepts Standard Schema-compatible validators as `validationSchema`, so the right integration is not a custom VeeValidate state manager. The right integration is a tiny bridge that wraps a `Schema` instance in the Standard Schema shape.
+
+What it does:
+
+* exposes `toVeeValidateSchema(schema, options)`
+* returns an object with a `~standard.validate()` method
+* validates through `schema.validateWith(...)`
+* returns normalized output on success
+* converts the flat error map into Standard Schema `issues` with nested path segments
+
+Important design choices:
+
+* **No VeeValidate import:** the bridge has no runtime dependency on `vee-validate`.
+* **Default operation is `create`:** that matches the other form adapters.
+* **Standard Schema path output:** issue paths become arrays like `['roles', 0, 'label']` so VeeValidate can map nested array/object errors back to fields.
+* **Configuration errors still throw:** invalid schema instances or invalid operation configuration are programmer errors and should fail loudly. Validation failures return `issues`.
+
+There is also one VeeValidate-specific caveat worth preserving in the docs: Standard Schema validation can normalize submitted output, but VeeValidate still expects callers to supply their own `initialValues`. Schema defaults do not magically pre-populate the UI state.
 
 ---

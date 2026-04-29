@@ -69,6 +69,9 @@ const BUILTIN_VALIDATOR_EXPORTERS = {
   maxLength: ({ definition, parameterValue }) => definition.type === 'string' ? { maxLength: parameterValue } : null,
   min: ({ definition, parameterValue }) => (definition.type === 'number' || definition.type === 'integer') ? { minimum: parameterValue } : null,
   max: ({ definition, parameterValue }) => (definition.type === 'number' || definition.type === 'integer') ? { maximum: parameterValue } : null,
+  pattern: ({ definition, parameterValue }) => definition.type === 'string'
+    ? { pattern: parameterValue instanceof RegExp ? parameterValue.source : parameterValue }
+    : null,
   enum: ({ parameterValue }) => ({ enum: parameterValue }),
   notEmpty: ({ parameterValue, definition }) => {
     if (!parameterValue) return null

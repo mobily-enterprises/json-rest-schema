@@ -3,8 +3,9 @@
  * Assembles and exports the `createSchema` factory function and related utilities.
  */
 
-import { Schema } from './Schema.js'
-import CorePlugin from './CorePlugin.js'
+import { Schema } from './core/Schema.js'
+import CorePlugin from './core/CorePlugin.js'
+import { flattenErrors, getError, hasError, nestErrors } from './utils/error-helpers.js'
 
 /**
  * @type {Object.<string, Function>}
@@ -60,7 +61,7 @@ export function use (plugin) {
  * Each created schema will use the currently registered global types and validators.
  * @param {object} structure - The schema definition object.
  * @param {{operations?: object}} [options={}] - Per-schema configuration options.
- * @returns {import('./Schema').Schema} A new schema instance.
+ * @returns {import('./core/Schema.js').Schema} A new schema instance.
  */
 const createSchema = (structure, options = {}) => new Schema(
   structure,
@@ -79,4 +80,4 @@ createSchema.use = use
 createSchema.use(CorePlugin)
 
 // Export all functions as named exports
-export { createSchema }
+export { createSchema, getError, hasError, nestErrors, flattenErrors }

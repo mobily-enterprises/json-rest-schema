@@ -9,8 +9,12 @@
 
 import { describe, it } from 'node:test'
 import assert from 'node:assert'
-import { createSchema } from './src/index.js'
-import { Schema } from './src/Schema.js'
+import { createSchema, flattenErrors, getError, hasError, nestErrors } from './src/index.js'
+import { Schema } from './src/core/Schema.js'
+import { jsonRestSchemaResolver } from './src/adapters/react-hook-form.js'
+import { toVeeValidateSchema } from './src/adapters/vee-validate.js'
+import { useSchemaField, useSchemaForm } from './src/adapters/vue.js'
+import { createVuetifyRule, fieldProps, getVuetifyErrorMessages } from './src/adapters/vuetify.js'
 import * as flatted from 'flatted'
 
 // Helper for asserting that a specific error exists and has the correct code.
@@ -23,6 +27,36 @@ function assertError (errors, fieldName, expectedCode) {
 describe('1. Core API (`createSchema`)', () => {
   it('should export a function `createSchema`', () => {
     assert.strictEqual(typeof createSchema, 'function')
+  })
+
+  it('should export error helper utilities', () => {
+    assert.strictEqual(typeof getError, 'function')
+    assert.strictEqual(typeof hasError, 'function')
+    assert.strictEqual(typeof nestErrors, 'function')
+    assert.strictEqual(typeof flattenErrors, 'function')
+  })
+
+  it('should export the React Hook Form resolver through the package subpath', async () => {
+    const reactHookFormModule = await import('json-rest-schema/react-hook-form')
+    assert.strictEqual(reactHookFormModule.jsonRestSchemaResolver, jsonRestSchemaResolver)
+  })
+
+  it('should export the Vue helpers through the package subpath', async () => {
+    const vueModule = await import('json-rest-schema/vue')
+    assert.strictEqual(vueModule.useSchemaForm, useSchemaForm)
+    assert.strictEqual(vueModule.useSchemaField, useSchemaField)
+  })
+
+  it('should export the Vuetify helpers through the package subpath', async () => {
+    const vuetifyModule = await import('json-rest-schema/vuetify')
+    assert.strictEqual(vuetifyModule.createVuetifyRule, createVuetifyRule)
+    assert.strictEqual(vuetifyModule.fieldProps, fieldProps)
+    assert.strictEqual(vuetifyModule.getVuetifyErrorMessages, getVuetifyErrorMessages)
+  })
+
+  it('should export the VeeValidate bridge through the package subpath', async () => {
+    const veeValidateModule = await import('json-rest-schema/vee-validate')
+    assert.strictEqual(veeValidateModule.toVeeValidateSchema, toVeeValidateSchema)
   })
 
   it('should have `use`, `addType`, and `addValidator` methods on the factory', () => {
@@ -498,6 +532,291 @@ describe('2. Core Validation Logic (`Schema.js`)', () => {
     })
   })
 
+  describe('Path-Scoped Validation', () => {
+    const workspaceSummarySchema = createSchema({
+      id: { type: 'id', required: true },
+      slug: { type: 'string', required: true, minLength: 3 },
+      ownerUserId: { type: 'id', required: true }
+    })
+
+    const roleSchema = createSchema({
+      id: { type: 'string', required: true },
+      label: { type: 'string', required: true, minLength: 2 }
+    })
+
+    it('validateAt should default to patch semantics and return only the requested normalized value', () => {
+      const schema = createSchema({
+        name: { type: 'string', required: true, minLength: 3 }
+      })
+
+      const result = schema.validateAt('name', { name: '  Alex  ' })
+
+      assert.deepStrictEqual(result, {
+        validatedValue: 'Alex',
+        errors: {}
+      })
+    })
+
+    it('validateAt should enforce exact-path required rules when an operation is provided', () => {
+      const schema = createSchema({
+        name: { type: 'string', required: true }
+      })
+
+      const result = schema.validateAt('name', {}, { operation: 'create' })
+
+      assert.strictEqual(result.validatedValue, undefined)
+      assertError(result.errors, 'name', 'REQUIRED')
+    })
+
+    it('validateAt should apply defaults for exact selected fields when the chosen operation applies defaults', () => {
+      const schema = createSchema({
+        role: { type: 'string', defaultTo: 'guest' }
+      })
+
+      const result = schema.validateAt('role', {}, { operation: 'create' })
+
+      assert.deepStrictEqual(result, {
+        validatedValue: 'guest',
+        errors: {}
+      })
+    })
+
+    it('validateAt should validate only the selected nested path without leaking sibling required rules', () => {
+      const schema = createSchema({
+        workspace: { type: 'object', required: true, schema: workspaceSummarySchema }
+      })
+
+      const result = schema.validateAt('workspace.slug', {
+        workspace: {
+          slug: '  primary  '
+        }
+      }, {
+        operation: 'create'
+      })
+
+      assert.deepStrictEqual(result, {
+        validatedValue: 'primary',
+        errors: {}
+      })
+    })
+
+    it('validateAt should not emit parent required errors when only a descendant path is selected', () => {
+      const schema = createSchema({
+        workspace: { type: 'object', required: true, schema: workspaceSummarySchema }
+      })
+
+      const result = schema.validateAt('workspace.slug', {}, { operation: 'create' })
+
+      assert.strictEqual(result.validatedValue, undefined)
+      assert.deepStrictEqual(result.errors, {})
+    })
+
+    it('validateAt should report parent container type errors when a descendant path cannot be traversed', () => {
+      const schema = createSchema({
+        workspace: { type: 'object', schema: workspaceSummarySchema }
+      })
+
+      const result = schema.validateAt('workspace.slug', {
+        workspace: 'not-an-object'
+      })
+
+      assert.strictEqual(result.validatedValue, undefined)
+      assertError(result.errors, 'workspace', 'TYPE_CAST_FAILED')
+    })
+
+    it('validateAt should support exact nested object paths and reuse full nested validation semantics', () => {
+      const schema = createSchema({
+        workspace: { type: 'object', schema: workspaceSummarySchema }
+      })
+
+      const result = schema.validateAt('workspace', {
+        workspace: {
+          slug: '  main  '
+        }
+      }, {
+        operation: 'create'
+      })
+
+      assert.deepStrictEqual(result.validatedValue, {
+        slug: 'main'
+      })
+      assertError(result.errors, 'workspace.id', 'REQUIRED')
+      assertError(result.errors, 'workspace.ownerUserId', 'REQUIRED')
+    })
+
+    it('validateAt should validate array item descendant paths without leaking sibling item required rules', () => {
+      const schema = createSchema({
+        roles: { type: 'array', required: true, items: roleSchema }
+      })
+
+      const result = schema.validateAt('roles.0.label', {
+        roles: [
+          { label: '  Editor  ' }
+        ]
+      }, {
+        operation: 'create'
+      })
+
+      assert.deepStrictEqual(result, {
+        validatedValue: 'Editor',
+        errors: {}
+      })
+    })
+
+    it('validatePaths should return only the selected validated subset', () => {
+      const schema = createSchema({
+        workspace: { type: 'object', schema: workspaceSummarySchema },
+        status: { type: 'string', defaultTo: 'draft' }
+      })
+
+      const result = schema.validatePaths([
+        'workspace.slug',
+        'status'
+      ], {
+        workspace: {
+          slug: '  next  ',
+          ownerUserId: '42'
+        }
+      }, {
+        operation: 'create'
+      })
+
+      assert.deepStrictEqual(result, {
+        validatedObject: {
+          workspace: {
+            slug: 'next'
+          },
+          status: 'draft'
+        },
+        errors: {}
+      })
+    })
+
+    it('validatePaths should support dotted skipParams on selected paths', () => {
+      const schema = createSchema({
+        workspace: { type: 'object', schema: workspaceSummarySchema }
+      })
+
+      const result = schema.validatePaths([
+        'workspace.slug'
+      ], {
+        workspace: {
+          slug: 'x'
+        }
+      }, {
+        operation: 'patch',
+        skipParams: {
+          'workspace.slug': ['minLength']
+        }
+      })
+
+      assert.deepStrictEqual(result, {
+        validatedObject: {
+          workspace: {
+            slug: 'x'
+          }
+        },
+        errors: {}
+      })
+    })
+
+    it('validatePaths should honor custom operations on the selected subset', () => {
+      const schema = createSchema({
+        name: { type: 'string', required: true },
+        role: { type: 'string', defaultTo: 'guest' }
+      }, {
+        operations: {
+          upsert: {
+            targetFields: 'schema',
+            enforceRequired: false,
+            applyDefaults: true,
+            outputFields: 'validated'
+          }
+        }
+      })
+
+      const result = schema.validatePaths(['role'], {}, { operation: 'upsert' })
+
+      assert.deepStrictEqual(result, {
+        validatedObject: {
+          role: 'guest'
+        },
+        errors: {}
+      })
+    })
+
+    it('validateAt should allow mode as compatibility sugar for built-in operations', () => {
+      const schema = createSchema({
+        role: { type: 'string', defaultTo: 'guest' }
+      })
+
+      assert.deepStrictEqual(
+        schema.validateAt('role', {}, { mode: 'create' }),
+        schema.validateAt('role', {}, { operation: 'create' })
+      )
+    })
+
+    it('validateAt should reject mismatched operation and mode options', () => {
+      const schema = createSchema({
+        name: { type: 'string' }
+      })
+
+      assert.throws(
+        () => schema.validateAt('name', {}, { operation: 'create', mode: 'patch' }),
+        /Path validation options `operation` and `mode` must match when both are provided\./
+      )
+    })
+
+    it('validateAt should reject invalid schema paths clearly', () => {
+      const schema = createSchema({
+        workspace: { type: 'object', schema: workspaceSummarySchema }
+      })
+
+      assert.throws(
+        () => schema.validateAt('workspace.owner.slug', { workspace: {} }),
+        /Unknown schema path "owner"\./
+      )
+    })
+
+    it('validateAt should reject nested selection inside opaque objects', () => {
+      const schema = createSchema({
+        metadata: { type: 'object', additionalProperties: true }
+      })
+
+      assert.throws(
+        () => schema.validateAt('metadata.theme', { metadata: { theme: 'dark' } }),
+        /Schema path "metadata" does not support nested field selection\./
+      )
+    })
+
+    it('validateAt should reject non-numeric array path segments', () => {
+      const schema = createSchema({
+        roles: { type: 'array', items: roleSchema }
+      })
+
+      assert.throws(
+        () => schema.validateAt('roles.first.label', { roles: [] }),
+        /Schema path "roles.first" is invalid because array segments must use numeric indexes\./
+      )
+    })
+
+    it('validateAt and validatePaths should reject non-object root inputs', () => {
+      const schema = createSchema({
+        name: { type: 'string' }
+      })
+
+      assert.throws(
+        () => schema.validateAt('name', null),
+        /validateAt\(\) expects a plain object input\./
+      )
+
+      assert.throws(
+        () => schema.validatePaths(['name'], []),
+        /validatePaths\(\) expects a plain object input\./
+      )
+    })
+  })
+
   it('`cleanup` method should work correctly', () => {
     const schema = createSchema({
       secret: { type: 'string', isSecret: true },
@@ -506,6 +825,934 @@ describe('2. Core Validation Logic (`Schema.js`)', () => {
     const obj = { secret: '123', public: 'abc' }
     const cleaned = schema.cleanup(obj, 'isSecret')
     assert.deepStrictEqual(cleaned, { secret: '123' })
+  })
+})
+
+describe('2.25. Error Helper Utilities', () => {
+  const sampleErrors = {
+    name: {
+      field: 'name',
+      code: 'REQUIRED',
+      message: 'Field is required',
+      params: {}
+    },
+    'workspace.slug': {
+      field: 'workspace.slug',
+      code: 'MIN_LENGTH',
+      message: 'Length must be at least 3 characters.',
+      params: { min: 3, actual: 1 }
+    },
+    'roles.2.label': {
+      field: 'roles.2.label',
+      code: 'REQUIRED',
+      message: 'Field is required',
+      params: {}
+    }
+  }
+
+  it('getError should read a flat dotted-path error directly', () => {
+    assert.strictEqual(getError(sampleErrors, 'workspace.slug'), sampleErrors['workspace.slug'])
+    assert.strictEqual(getError(sampleErrors, 'workspace.id'), undefined)
+  })
+
+  it('hasError should report whether a path is present in the flat error map', () => {
+    assert.strictEqual(hasError(sampleErrors, 'name'), true)
+    assert.strictEqual(hasError(sampleErrors, 'workspace.id'), false)
+  })
+
+  it('helpers should tolerate missing error maps gracefully', () => {
+    assert.strictEqual(getError(null, 'name'), undefined)
+    assert.strictEqual(hasError(undefined, 'name'), false)
+    assert.deepStrictEqual(nestErrors(null), {})
+    assert.deepStrictEqual(flattenErrors(null), {})
+  })
+
+  it('nestErrors should convert flat object and array paths into nested structures', () => {
+    const expectedRoles = []
+    expectedRoles[2] = {
+      label: sampleErrors['roles.2.label']
+    }
+
+    assert.deepStrictEqual(nestErrors(sampleErrors), {
+      name: sampleErrors.name,
+      workspace: {
+        slug: sampleErrors['workspace.slug']
+      },
+      roles: expectedRoles
+    })
+  })
+
+  it('helpers should reject invalid dotted paths clearly', () => {
+    assert.throws(
+      () => getError(sampleErrors, ''),
+      /getError\(\) expects a non-empty dotted path string\./
+    )
+
+    assert.throws(
+      () => hasError(sampleErrors, 'workspace..slug'),
+      /getError\(\) received an invalid path "workspace\.\.slug"\./
+    )
+
+    assert.throws(
+      () => nestErrors({
+        'workspace..slug': sampleErrors['workspace.slug']
+      }),
+      /nestErrors\(\) received an invalid path "workspace\.\.slug"\./
+    )
+  })
+
+  it('nestErrors should reject conflicting leaf and descendant paths clearly', () => {
+    assert.throws(
+      () => nestErrors({
+        workspace: {
+          field: 'workspace',
+          code: 'TYPE_CAST_FAILED',
+          message: 'Value could not be cast to the required type.',
+          params: {}
+        },
+        'workspace.slug': sampleErrors['workspace.slug']
+      }),
+      /nestErrors\(\) cannot nest conflicting path "workspace\.slug"\./
+    )
+  })
+
+  it('flattenErrors should convert nested objects and arrays back into a flat dotted-path map', () => {
+    const nestedErrors = {
+      name: sampleErrors.name,
+      workspace: {
+        slug: sampleErrors['workspace.slug']
+      },
+      roles: []
+    }
+
+    nestedErrors.roles[2] = {
+      label: sampleErrors['roles.2.label']
+    }
+
+    assert.deepStrictEqual(flattenErrors(nestedErrors), sampleErrors)
+  })
+
+  it('flattenErrors should round-trip with nestErrors for valid nested shapes', () => {
+    assert.deepStrictEqual(
+      flattenErrors(nestErrors(sampleErrors)),
+      sampleErrors
+    )
+  })
+
+  it('flattenErrors should reject malformed nested leaves clearly', () => {
+    assert.throws(
+      () => flattenErrors({
+        workspace: {
+          slug: 'bad-leaf'
+        }
+      }),
+      /flattenErrors\(\) found an invalid nested error value at "workspace\.slug"\./
+    )
+
+    assert.throws(
+      () => flattenErrors({
+        field: 'workspace.slug',
+        code: 'MIN_LENGTH',
+        message: 'Length must be at least 3 characters.',
+        params: { min: 3, actual: 1 }
+      }),
+      /flattenErrors\(\) cannot flatten a root-level error object without a path\./
+    )
+  })
+})
+
+describe('2.35. React Hook Form Resolver', () => {
+  function createMockRef () {
+    return {
+      customValidity: '',
+      reportValidityCalls: 0,
+      setCustomValidity (message) {
+        this.customValidity = message
+      },
+      reportValidity () {
+        this.reportValidityCalls += 1
+      }
+    }
+  }
+
+  it('should return fully normalized create values on successful full-form validation', () => {
+    const schema = createSchema({
+      name: { type: 'string', required: true },
+      role: { type: 'string', defaultTo: 'guest' }
+    })
+
+    const resolver = jsonRestSchemaResolver(schema)
+    const result = resolver(
+      { name: '  Alex  ' },
+      undefined,
+      {
+        criteriaMode: 'firstError',
+        fields: {
+          name: { ref: null }
+        },
+        shouldUseNativeValidation: false
+      }
+    )
+
+    assert.deepStrictEqual(result, {
+      values: {
+        name: 'Alex',
+        role: 'guest'
+      },
+      errors: {}
+    })
+  })
+
+  it('should return raw input values on success when raw mode is enabled', () => {
+    const schema = createSchema({
+      name: { type: 'string', required: true },
+      role: { type: 'string', defaultTo: 'guest' }
+    })
+
+    const input = { name: '  Alex  ' }
+    const resolver = jsonRestSchemaResolver(schema, {}, { raw: true })
+    const result = resolver(
+      input,
+      undefined,
+      {
+        criteriaMode: 'firstError',
+        fields: {
+          name: { ref: null }
+        },
+        shouldUseNativeValidation: false
+      }
+    )
+
+    assert.deepStrictEqual(result, {
+      values: { name: '  Alex  ' },
+      errors: {}
+    })
+    assert.notStrictEqual(result.values, input)
+  })
+
+  it('should keep raw values during field-level re-validation by default', () => {
+    const workspaceSummarySchema = createSchema({
+      id: { type: 'id', required: true },
+      slug: { type: 'string', required: true, minLength: 3 },
+      ownerUserId: { type: 'id', required: true }
+    })
+
+    const schema = createSchema({
+      workspace: { type: 'object', required: true, schema: workspaceSummarySchema }
+    })
+
+    const resolver = jsonRestSchemaResolver(schema)
+    const input = {
+      workspace: {
+        slug: '  main  '
+      }
+    }
+
+    const result = resolver(
+      input,
+      undefined,
+      {
+        criteriaMode: 'firstError',
+        names: ['workspace.slug'],
+        fields: {
+          'workspace.slug': { ref: null },
+          'workspace.id': { ref: null },
+          'workspace.ownerUserId': { ref: null }
+        },
+        shouldUseNativeValidation: false
+      }
+    )
+
+    assert.deepStrictEqual(result, {
+      values: {
+        workspace: {
+          slug: '  main  '
+        }
+      },
+      errors: {}
+    })
+    assert.notStrictEqual(result.values, input)
+  })
+
+  it('should allow normalized field-level success values when explicitly requested', () => {
+    const workspaceSummarySchema = createSchema({
+      id: { type: 'id', required: true },
+      slug: { type: 'string', required: true, minLength: 3 },
+      ownerUserId: { type: 'id', required: true }
+    })
+
+    const schema = createSchema({
+      workspace: { type: 'object', required: true, schema: workspaceSummarySchema }
+    })
+
+    const resolver = jsonRestSchemaResolver(schema, {}, { normalizeOnFieldValidation: true })
+    const result = resolver(
+      {
+        workspace: {
+          slug: '  main  '
+        }
+      },
+      undefined,
+      {
+        criteriaMode: 'firstError',
+        names: ['workspace.slug'],
+        fields: {
+          'workspace.slug': { ref: null },
+          'workspace.id': { ref: null },
+          'workspace.ownerUserId': { ref: null }
+        },
+        shouldUseNativeValidation: false
+      }
+    )
+
+    assert.deepStrictEqual(result, {
+      values: {
+        workspace: {
+          slug: 'main'
+        }
+      },
+      errors: {}
+    })
+  })
+
+  it('should map nested array item errors into hierarchical React Hook Form errors', () => {
+    const roleSchema = createSchema({
+      id: { type: 'string', required: true },
+      label: { type: 'string', required: true, minLength: 2 }
+    })
+
+    const schema = createSchema({
+      roles: { type: 'array', items: roleSchema }
+    })
+
+    const labelRef = createMockRef()
+    const resolver = jsonRestSchemaResolver(schema)
+    const result = resolver(
+      {
+        roles: [
+          { id: 'admin' }
+        ]
+      },
+      undefined,
+      {
+        criteriaMode: 'firstError',
+        fields: {
+          'roles.0.id': { ref: createMockRef() },
+          'roles.0.label': { ref: labelRef }
+        },
+        shouldUseNativeValidation: false
+      }
+    )
+
+    assert.deepStrictEqual(result.values, {})
+    assert.strictEqual(result.errors.roles[0].label.type, 'REQUIRED')
+    assert.strictEqual(result.errors.roles[0].label.message, 'Field is required')
+    assert.strictEqual(result.errors.roles[0].label.ref, labelRef)
+  })
+
+  it('should place direct array-field errors under the React Hook Form root key', () => {
+    const schema = createSchema({
+      roles: {
+        type: 'array',
+        validator: value => Array.isArray(value) && value.length > 0 ? undefined : 'Pick at least one role.'
+      }
+    })
+
+    const resolver = jsonRestSchemaResolver(schema)
+    const result = resolver(
+      {
+        roles: []
+      },
+      undefined,
+      {
+        criteriaMode: 'firstError',
+        names: ['roles.0.label'],
+        fields: {
+          'roles.0.label': { ref: createMockRef() }
+        },
+        shouldUseNativeValidation: false
+      }
+    )
+
+    assert.deepStrictEqual(result.values, {})
+    assert.strictEqual(result.errors.roles.root.type, 'CUSTOM_VALIDATOR_FAILED')
+    assert.strictEqual(result.errors.roles.root.message, 'Pick at least one role.')
+  })
+
+  it('should support criteriaMode=all by exposing the field error types map', () => {
+    const schema = createSchema({
+      name: { type: 'string', required: true }
+    })
+
+    const resolver = jsonRestSchemaResolver(schema)
+    const result = resolver(
+      {},
+      undefined,
+      {
+        criteriaMode: 'all',
+        fields: {
+          name: { ref: null }
+        },
+        shouldUseNativeValidation: false
+      }
+    )
+
+    assert.strictEqual(result.errors.name.type, 'REQUIRED')
+    assert.deepStrictEqual(result.errors.name.types, {
+      REQUIRED: 'Field is required'
+    })
+  })
+
+  it('should honor custom schema operations inside the resolver', () => {
+    const schema = createSchema({
+      name: { type: 'string', required: true },
+      role: { type: 'string', defaultTo: 'guest' }
+    }, {
+      operations: {
+        upsert: {
+          targetFields: 'schema',
+          enforceRequired: false,
+          applyDefaults: true,
+          outputFields: 'validated'
+        }
+      }
+    })
+
+    const resolver = jsonRestSchemaResolver(schema, { operation: 'upsert' })
+    const result = resolver(
+      {},
+      undefined,
+      {
+        criteriaMode: 'firstError',
+        fields: {
+          name: { ref: null },
+          role: { ref: null }
+        },
+        shouldUseNativeValidation: false
+      }
+    )
+
+    assert.deepStrictEqual(result, {
+      values: {
+        role: 'guest'
+      },
+      errors: {}
+    })
+  })
+
+  it('should support bracket-style RHF field names and selected paths', () => {
+    const roleSchema = createSchema({
+      id: { type: 'string', required: true },
+      label: { type: 'string', required: true, minLength: 2 }
+    })
+
+    const schema = createSchema({
+      roles: { type: 'array', items: roleSchema }
+    })
+
+    const resolver = jsonRestSchemaResolver(schema, {}, { normalizeOnFieldValidation: true })
+    const result = resolver(
+      {
+        roles: [
+          { label: '  Editor  ' }
+        ]
+      },
+      undefined,
+      {
+        criteriaMode: 'firstError',
+        names: ['roles[0].label'],
+        fields: {
+          'roles[0].label': { ref: createMockRef() },
+          'roles[0].id': { ref: createMockRef() }
+        },
+        shouldUseNativeValidation: false
+      }
+    )
+
+    assert.deepStrictEqual(result, {
+      values: {
+        roles: [
+          { label: 'Editor' }
+        ]
+      },
+      errors: {}
+    })
+  })
+
+  it('should apply native browser validation messages when requested', () => {
+    const schema = createSchema({
+      name: { type: 'string', required: true }
+    })
+
+    const nameRef = createMockRef()
+    const resolver = jsonRestSchemaResolver(schema)
+    const errorResult = resolver(
+      {},
+      undefined,
+      {
+        criteriaMode: 'firstError',
+        fields: {
+          name: { ref: nameRef }
+        },
+        shouldUseNativeValidation: true
+      }
+    )
+
+    assert.strictEqual(errorResult.errors.name.message, 'Field is required')
+    assert.strictEqual(nameRef.customValidity, 'Field is required')
+    assert.strictEqual(nameRef.reportValidityCalls, 1)
+
+    const successResult = resolver(
+      { name: 'Alex' },
+      undefined,
+      {
+        criteriaMode: 'firstError',
+        fields: {
+          name: { ref: nameRef }
+        },
+        shouldUseNativeValidation: true
+      }
+    )
+
+    assert.deepStrictEqual(successResult.errors, {})
+    assert.strictEqual(nameRef.customValidity, '')
+    assert.strictEqual(nameRef.reportValidityCalls, 2)
+  })
+
+  it('should reject invalid resolver configuration clearly', () => {
+    const schema = createSchema({
+      name: { type: 'string' }
+    })
+
+    assert.throws(
+      () => jsonRestSchemaResolver({}, {}, {}),
+      /jsonRestSchemaResolver\(\) expects a Schema instance\./
+    )
+
+    assert.throws(
+      () => jsonRestSchemaResolver(schema, { operation: 'create', mode: 'patch' }),
+      /Resolver schema options `operation` and `mode` must match when both are provided\./
+    )
+
+    assert.throws(
+      () => jsonRestSchemaResolver(schema, {}, { raw: 'yes' }),
+      /jsonRestSchemaResolver\(\) resolver option `raw` must be a boolean\./
+    )
+
+    assert.throws(
+      () => jsonRestSchemaResolver(schema, {}, { normalizeOnFieldValidation: 'yes' }),
+      /jsonRestSchemaResolver\(\) resolver option `normalizeOnFieldValidation` must be a boolean\./
+    )
+  })
+})
+
+describe('2.36. Vue + Vuetify Adapters', () => {
+  it('useSchemaForm should validate full forms and expose the normalized result', () => {
+    const schema = createSchema({
+      name: { type: 'string', required: true },
+      role: { type: 'string', defaultTo: 'guest' }
+    })
+
+    const form = useSchemaForm(schema, {
+      values: {
+        name: '  Alex  '
+      }
+    })
+
+    const result = form.validate()
+
+    assert.deepStrictEqual(result, {
+      validatedObject: {
+        name: 'Alex',
+        role: 'guest'
+      },
+      errors: {}
+    })
+    assert.deepStrictEqual(form.errors, {})
+    assert.deepStrictEqual(form.lastResult, result)
+  })
+
+  it('useSchemaForm should validate only the selected field path without leaking sibling required rules', () => {
+    const workspaceSummarySchema = createSchema({
+      id: { type: 'id', required: true },
+      slug: { type: 'string', required: true, minLength: 3 },
+      ownerUserId: { type: 'id', required: true }
+    })
+
+    const schema = createSchema({
+      workspace: { type: 'object', required: true, schema: workspaceSummarySchema }
+    })
+
+    const form = useSchemaForm(schema, {
+      values: {
+        workspace: {
+          slug: '  main  '
+        }
+      },
+      operation: 'create'
+    })
+
+    const result = form.validateField('workspace.slug')
+
+    assert.deepStrictEqual(result, {
+      validatedObject: {
+        workspace: {
+          slug: 'main'
+        }
+      },
+      errors: {}
+    })
+    assert.deepStrictEqual(form.errors, {})
+  })
+
+  it('useSchemaForm should merge selected-path errors and clear only the validated path on the next pass', () => {
+    const schema = createSchema({
+      name: { type: 'string', required: true, minLength: 3 },
+      email: { type: 'string', required: true }
+    })
+
+    const values = {
+      name: 'x'
+    }
+    const form = useSchemaForm(schema, {
+      values,
+      operation: 'create'
+    })
+
+    form.validateField('name')
+    assertError(form.errors, 'name', 'MIN_LENGTH')
+
+    form.validateField('email')
+    assertError(form.errors, 'name', 'MIN_LENGTH')
+    assertError(form.errors, 'email', 'REQUIRED')
+
+    values.name = '  Alex  '
+    form.validateField('name')
+
+    assert.strictEqual(form.errors.name, undefined)
+    assertError(form.errors, 'email', 'REQUIRED')
+  })
+
+  it('useSchemaForm should support bracket-style selected paths', () => {
+    const roleSchema = createSchema({
+      id: { type: 'string', required: true },
+      label: { type: 'string', required: true, minLength: 2 }
+    })
+
+    const schema = createSchema({
+      roles: { type: 'array', items: roleSchema }
+    })
+
+    const form = useSchemaForm(schema, {
+      values: {
+        roles: [
+          { label: '  Editor  ' }
+        ]
+      },
+      operation: 'patch'
+    })
+
+    const result = form.validateFields(['roles[0].label'])
+
+    assert.deepStrictEqual(result, {
+      validatedObject: {
+        roles: [
+          { label: 'Editor' }
+        ]
+      },
+      errors: {}
+    })
+  })
+
+  it('submit() should validate first and only call the handler on success', () => {
+    const schema = createSchema({
+      name: { type: 'string', required: true },
+      role: { type: 'string', defaultTo: 'guest' }
+    })
+
+    const values = { value: {} }
+    const form = useSchemaForm(schema, {
+      values
+    })
+    const calls = []
+    const submit = form.submit((validatedObject, result, eventName) => {
+      calls.push({ validatedObject, result, eventName })
+      return validatedObject
+    })
+
+    const failedResult = submit('first-submit')
+    assert.deepStrictEqual(failedResult.errors, {
+      name: {
+        field: 'name',
+        code: 'REQUIRED',
+        message: 'Field is required',
+        params: {}
+      }
+    })
+    assert.strictEqual(calls.length, 0)
+
+    values.value.name = '  Alex  '
+    const successValue = submit('second-submit')
+
+    assert.deepStrictEqual(successValue, {
+      name: 'Alex',
+      role: 'guest'
+    })
+    assert.strictEqual(calls.length, 1)
+    assert.strictEqual(calls[0].eventName, 'second-submit')
+    assert.deepStrictEqual(calls[0].validatedObject, {
+      name: 'Alex',
+      role: 'guest'
+    })
+  })
+
+  it('useSchemaField should expose value and error helpers for one path', () => {
+    const profileSchema = createSchema({
+      name: { type: 'string', required: true, minLength: 3 }
+    })
+
+    const schema = createSchema({
+      profile: { type: 'object', required: true, schema: profileSchema }
+    })
+
+    const values = { value: {} }
+    const form = useSchemaForm(schema, {
+      values,
+      operation: 'create'
+    })
+    const field = useSchemaField(form, 'profile.name')
+
+    field.setValue('x')
+    assert.strictEqual(values.value.profile.name, 'x')
+
+    field.validate()
+    assert.strictEqual(field.hasError, true)
+    assert.strictEqual(field.error.code, 'MIN_LENGTH')
+    assert.deepStrictEqual(field.messages, [field.error.message])
+
+    field.setValue('  Alex  ')
+    field.validate()
+
+    assert.strictEqual(field.value, '  Alex  ')
+    assert.strictEqual(field.hasError, false)
+    assert.deepStrictEqual(field.messages, [])
+  })
+
+  it('useSchemaForm should honor custom operations', () => {
+    const schema = createSchema({
+      name: { type: 'string', required: true },
+      role: { type: 'string', defaultTo: 'guest' }
+    }, {
+      operations: {
+        upsert: {
+          targetFields: 'schema',
+          enforceRequired: false,
+          applyDefaults: true,
+          outputFields: 'validated'
+        }
+      }
+    })
+
+    const form = useSchemaForm(schema, {
+      values: {},
+      operation: 'upsert'
+    })
+
+    assert.deepStrictEqual(form.validate(), {
+      validatedObject: {
+        role: 'guest'
+      },
+      errors: {}
+    })
+  })
+
+  it('Vuetify helpers should return rule messages, flat messages, and optional field props', () => {
+    const schema = createSchema({
+      name: { type: 'string', required: true, minLength: 3 }
+    })
+
+    const form = useSchemaForm(schema, {
+      values: {
+        name: ''
+      },
+      operation: 'create'
+    })
+    const rule = createVuetifyRule(form, 'name')
+    const defaultProps = fieldProps(form, 'name')
+    const messageProps = fieldProps(form, 'name', { includeErrorMessages: true })
+
+    assert.ok(Array.isArray(defaultProps.rules))
+    assert.strictEqual(Object.hasOwn(defaultProps, 'errorMessages'), false)
+
+    const firstMessage = rule('x')
+    assert.strictEqual(firstMessage, form.errors.name.message)
+    assert.deepStrictEqual(getVuetifyErrorMessages(form, 'name'), [firstMessage])
+    assert.deepStrictEqual(messageProps.errorMessages, [firstMessage])
+    assert.strictEqual(messageProps.error, true)
+
+    const secondMessage = messageProps.rules[0]('Alex')
+    assert.strictEqual(secondMessage, true)
+    assert.deepStrictEqual(getVuetifyErrorMessages(form.errors, 'name'), [])
+    assert.deepStrictEqual(messageProps.errorMessages, [])
+    assert.strictEqual(messageProps.error, false)
+  })
+
+  it('Vue and Vuetify adapters should reject invalid configuration clearly', () => {
+    const schema = createSchema({
+      name: { type: 'string' }
+    })
+
+    assert.throws(
+      () => useSchemaForm({}, { values: {} }),
+      /useSchemaForm\(\) expects a Schema instance\./
+    )
+
+    assert.throws(
+      () => useSchemaForm(schema),
+      /useSchemaForm\(\) requires a `values` option\./
+    )
+
+    const form = useSchemaForm(schema, { values: {} })
+
+    assert.throws(
+      () => useSchemaField({}, 'name'),
+      /useSchemaField\(\) expects a form object returned by useSchemaForm\(\)\./
+    )
+
+    assert.throws(
+      () => useSchemaField(form, ''),
+      /Field path must be a non-empty string\./
+    )
+
+    assert.throws(
+      () => createVuetifyRule({}, 'name'),
+      /Vuetify helpers expect a form object returned by useSchemaForm\(\)\./
+    )
+
+    assert.throws(
+      () => fieldProps(form, ''),
+      /Vuetify helpers expect a non-empty field path\./
+    )
+  })
+})
+
+describe('2.37. VeeValidate Bridge', () => {
+  it('should return normalized values on successful validation', () => {
+    const schema = createSchema({
+      name: { type: 'string', required: true },
+      role: { type: 'string', defaultTo: 'guest' }
+    })
+
+    const standardSchema = toVeeValidateSchema(schema)
+    const result = standardSchema['~standard'].validate({
+      name: '  Alex  '
+    })
+
+    assert.deepStrictEqual(result, {
+      value: {
+        name: 'Alex',
+        role: 'guest'
+      }
+    })
+  })
+
+  it('should expose nested issue paths for failed validation', () => {
+    const roleSchema = createSchema({
+      id: { type: 'string', required: true },
+      label: { type: 'string', required: true, minLength: 2 }
+    })
+
+    const schema = createSchema({
+      workspace: {
+        type: 'object',
+        required: true,
+        schema: createSchema({
+          slug: { type: 'string', required: true, minLength: 3 }
+        })
+      },
+      roles: { type: 'array', items: roleSchema }
+    })
+
+    const standardSchema = toVeeValidateSchema(schema)
+    const result = standardSchema['~standard'].validate({
+      workspace: {
+        slug: 'x'
+      },
+      roles: [
+        { id: 'admin' }
+      ]
+    })
+
+    assert.deepStrictEqual(result, {
+      issues: [
+        {
+          message: 'Length must be at least 3 characters.',
+          path: ['workspace', 'slug']
+        },
+        {
+          message: 'Field is required',
+          path: ['roles', 0, 'label']
+        }
+      ]
+    })
+  })
+
+  it('should honor custom operations when building the VeeValidate schema', () => {
+    const schema = createSchema({
+      name: { type: 'string', required: true },
+      role: { type: 'string', defaultTo: 'guest' }
+    }, {
+      operations: {
+        upsert: {
+          targetFields: 'schema',
+          enforceRequired: false,
+          applyDefaults: true,
+          outputFields: 'validated'
+        }
+      }
+    })
+
+    const standardSchema = toVeeValidateSchema(schema, {
+      operation: 'upsert'
+    })
+
+    assert.deepStrictEqual(standardSchema['~standard'].validate({}), {
+      value: {
+        role: 'guest'
+      }
+    })
+  })
+
+  it('should return a root-level issue for non-object validation input', () => {
+    const schema = createSchema({
+      name: { type: 'string' }
+    })
+
+    const standardSchema = toVeeValidateSchema(schema)
+
+    assert.deepStrictEqual(standardSchema['~standard'].validate(null), {
+      issues: [
+        {
+          message: 'Validation input must be a plain object.'
+        }
+      ]
+    })
+  })
+
+  it('should reject invalid bridge configuration clearly', () => {
+    const schema = createSchema({
+      name: { type: 'string' }
+    })
+
+    assert.throws(
+      () => toVeeValidateSchema({}),
+      /toVeeValidateSchema\(\) expects a Schema instance\./
+    )
+
+    assert.throws(
+      () => toVeeValidateSchema(schema, { operation: 'create', mode: 'patch' }),
+      /VeeValidate schema options `operation` and `mode` must match when both are provided\./
+    )
   })
 })
 
@@ -1124,6 +2371,43 @@ describe('4. Core Plugin: Validator Handlers', () => {
     assertError(invalidErrors, 'status', 'ENUM_VALUE')
 
     const { errors: validErrors } = schema.create({ status: 'published' })
+    assert.strictEqual(Object.keys(validErrors).length, 0)
+  })
+
+  it('`enum` should support deep object membership in browser-safe builds', () => {
+    const schema = createSchema({
+      config: {
+        type: 'blob',
+        enum: [
+          {
+            scope: 'admin',
+            flags: ['read', 'write'],
+            rules: [{ allow: true }]
+          }
+        ]
+      }
+    })
+
+    const { errors: validErrors } = schema.create({
+      config: {
+        scope: 'admin',
+        flags: ['read', 'write'],
+        rules: [{ allow: true }]
+      }
+    })
+
+    assert.strictEqual(Object.keys(validErrors).length, 0)
+  })
+
+  it('`pattern` should enforce regular expression matches for strings', () => {
+    const schema = createSchema({
+      color: { type: 'string', pattern: '^#[0-9A-Fa-f]{6}$' }
+    })
+
+    const { errors: invalidErrors } = schema.create({ color: 'bad' })
+    assertError(invalidErrors, 'color', 'PATTERN')
+
+    const { errors: validErrors } = schema.create({ color: '#0F6B54' })
     assert.strictEqual(Object.keys(validErrors).length, 0)
   })
 

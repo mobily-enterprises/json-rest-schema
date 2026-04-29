@@ -8,7 +8,11 @@
  * 3. Run `node example.js` in your terminal.
  */
 
-import { createSchema } from './src/index.js'
+import { createSchema, flattenErrors, getError, hasError, nestErrors } from './src/index.js'
+import { jsonRestSchemaResolver } from './src/adapters/react-hook-form.js'
+import { toVeeValidateSchema } from './src/adapters/vee-validate.js'
+import { useSchemaField, useSchemaForm } from './src/adapters/vue.js'
+import { createVuetifyRule, fieldProps, getVuetifyErrorMessages } from './src/adapters/vuetify.js'
 import * as flatted from 'flatted'
 
 // --- A schema that uses every built-in type and validator ---
@@ -226,7 +230,7 @@ function runComprehensiveExample () {
     }
   }))
 
-  console.log('\nNested invalid result with dotted-path errors:', nestedContractExample.create({
+  const nestedInvalidResult = nestedContractExample.create({
     workspace: {
       id: '42',
       slug: 'ok',
@@ -240,9 +244,101 @@ function runComprehensiveExample () {
     metadata: {
       theme: 'dark'
     }
+  })
+
+  console.log('\nNested invalid result with dotted-path errors:', nestedInvalidResult)
+
+  console.log('\n--- 5. Error Helper Example ---')
+  console.log('getError(workspace.slug):', getError(nestedInvalidResult.errors, 'workspace.slug'))
+  console.log('hasError(roles.0.label):', hasError(nestedInvalidResult.errors, 'roles.0.label'))
+  const nestedUiErrors = nestErrors(nestedInvalidResult.errors)
+  console.log('nestErrors(errors):', nestedUiErrors)
+  console.log('flattenErrors(nestedUiErrors):', flattenErrors(nestedUiErrors))
+
+  console.log('\n--- 6. Path-Scoped Validation Example ---')
+  console.log('validateAt(workspace.slug):', nestedContractExample.validateAt('workspace.slug', {
+    workspace: {
+      slug: '  sandbox  '
+    }
+  }, {
+    operation: 'create'
   }))
 
-  console.log('\n--- 5. Transport JSON Schema Export ---')
+  console.log('validatePaths([workspace.slug, metadata]):', nestedContractExample.validatePaths([
+    'workspace.slug',
+    'metadata'
+  ], {
+    workspace: {
+      slug: '  focused  '
+    },
+    metadata: {
+      theme: 'dark'
+    }
+  }, {
+    operation: 'patch'
+  }))
+
+  console.log('\n--- 7. React Hook Form Resolver Example ---')
+  const reactHookFormResolver = jsonRestSchemaResolver(transportSchemaExample)
+  console.log('Resolver submit result:', reactHookFormResolver(
+    {
+      id: '42',
+      email: 'alex@example.com',
+      status: 'draft'
+    },
+    undefined,
+    {
+      criteriaMode: 'firstError',
+      fields: {
+        id: { ref: null },
+        email: { ref: null },
+        status: { ref: null }
+      },
+      shouldUseNativeValidation: false
+    }
+  ))
+
+  console.log('\n--- 8. Vue + Vuetify Adapter Example ---')
+  const vueValues = {
+    value: {
+      workspace: {
+        slug: '  sandbox  '
+      }
+    }
+  }
+  const vueForm = useSchemaForm(nestedContractExample, {
+    values: vueValues,
+    operation: 'patch'
+  })
+  const slugField = useSchemaField(vueForm, 'workspace.slug')
+  const slugProps = fieldProps(vueForm, 'workspace.slug', {
+    includeErrorMessages: true
+  })
+  const slugRule = createVuetifyRule(vueForm, 'workspace.slug')
+
+  console.log('Vue field validate result:', slugField.validate())
+  console.log('Vue field messages:', slugField.messages)
+  console.log('Vuetify rule("x"):', slugRule('x'))
+  console.log('Vuetify error messages after invalid rule:', getVuetifyErrorMessages(vueForm, 'workspace.slug'))
+  console.log('Vuetify fieldProps.errorMessages:', slugProps.errorMessages)
+
+  vueValues.value.workspace.slug = '  release  '
+  const submitVueForm = vueForm.submit(validatedObject => ({ saved: validatedObject }))
+  console.log('Vue submit result:', submitVueForm('save-click'))
+
+  console.log('\n--- 9. VeeValidate Bridge Example ---')
+  const veeValidateSchema = toVeeValidateSchema(transportSchemaExample)
+  console.log('VeeValidate success result:', veeValidateSchema['~standard'].validate({
+    id: '42',
+    email: ' alex@example.com ',
+    status: 'draft'
+  }))
+  console.log('VeeValidate failure result:', veeValidateSchema['~standard'].validate({
+    id: '0',
+    status: 'draft'
+  }))
+
+  console.log('\n--- 10. Transport JSON Schema Export ---')
   console.log('Create schema export:', JSON.stringify(transportSchemaExample.toJsonSchema(), null, 2))
   console.log('Patch schema export:', JSON.stringify(transportSchemaExample.toJsonSchema({ operation: 'patch' }), null, 2))
   console.log('Upsert schema export:', JSON.stringify(transportSchemaExample.toJsonSchema({ operation: 'upsert' }), null, 2))

@@ -5,8 +5,13 @@ import { defineConfig } from 'vite'
 import vuetify from 'vite-plugin-vuetify'
 
 const repoRoot = fileURLToPath(new URL('../..', import.meta.url))
+const repositoryName = process.env.GITHUB_REPOSITORY?.split('/')[1] ?? 'json-rest-schema'
+const base = process.env.DEMO_PUBLISH === 'true'
+  ? `/${repositoryName}/demos/vue-vuetify/`
+  : '/'
 
 export default defineConfig({
+  base,
   plugins: [
     vue(),
     vuetify({ autoImport: true })

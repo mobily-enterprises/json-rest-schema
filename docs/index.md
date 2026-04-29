@@ -8,12 +8,11 @@ Published documentation:
 
 ## Read The README By Section
 
-- [Shared Contract Boundary](/generated/shared-contract-boundary)
-- [Documentation](/generated/documentation)
+- [Installation](/generated/installation)
 - [Getting Started: Your First Schema](/generated/getting-started-your-first-schema)
 - [Understanding the Validation Result](/generated/understanding-the-validation-result)
 - [Common REST Recipes](/generated/common-rest-recipes)
 - [Built-in Rules Reference](/generated/built-in-rules-reference)
 - [Extending the Library: Custom Rules](/generated/extending-the-library-custom-rules)
 - [Advanced: Creating a Plugin](/generated/advanced-creating-a-plugin)
-- [Database-Agnostic Focus](/generated/database-agnostic-focus)
+- [Design Scope](/generated/design-scope)

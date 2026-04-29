@@ -35,7 +35,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build docs
+      - name: Install demo dependencies
+        run: |
+          npm ci --prefix demos/react-rhf
+          npm ci --prefix demos/vue-vuetify
+
+      - name: Build docs and published demos
         run: npm run docs:build
 
       - name: Upload Pages artifact

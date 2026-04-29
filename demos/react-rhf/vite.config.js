@@ -4,8 +4,13 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
 const repoRoot = fileURLToPath(new URL('../..', import.meta.url))
+const repositoryName = process.env.GITHUB_REPOSITORY?.split('/')[1] ?? 'json-rest-schema'
+const base = process.env.DEMO_PUBLISH === 'true'
+  ? `/${repositoryName}/demos/react-rhf/`
+  : '/'
 
 export default defineConfig({
+  base,
   plugins: [react()],
   resolve: {
     alias: [

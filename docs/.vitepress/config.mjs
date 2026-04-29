@@ -9,6 +9,10 @@ export default {
   description: 'Synchronous REST contract schemas with normalization, operation-aware validation, and framework adapters.',
   base: docsBase,
   cleanUrls: true,
+  ignoreDeadLinks: [
+    /^\/demos\/react-rhf(?:\/index)?$/,
+    /^\/demos\/vue-vuetify(?:\/index)?$/
+  ],
   lastUpdated: true,
   themeConfig: {
     nav: [

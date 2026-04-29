@@ -6,39 +6,34 @@ Published documentation:
 
 <https://mobily-enterprises.github.io/json-rest-schema/>
 
-## Shared Contract Boundary
+## Installation
 
-`json-rest-schema` is intentionally **synchronous**. Shared schemas need to run the same way on the client and the server, so this library is scoped to:
+Install the package in your app with:
 
-* typing and casting
-* normalization
-* local field validation
-* local cross-field validation
+```bash
+npm install json-rest-schema
+```
 
-It is **not** the place for database-backed uniqueness checks, external API lookups, or any other stateful async business rule. Put those checks in higher layers such as services, repositories, or actions after schema validation has produced a normalized payload.
-
-## Documentation
-
-This repo now ships a VitePress documentation site that renders this `README.md` as the main documentation page.
-
-Published docs:
-
-<https://mobily-enterprises.github.io/json-rest-schema/>
-
-Run it locally with:
+If you are working in this repo and want to run the documentation site locally:
 
 ```bash
 npm install
 npm run docs:dev
 ```
 
-Build it with:
+Build the full static site, including the standalone React and Vue demo apps, with:
 
 ```bash
 npm run docs:build
 ```
 
-The docs site is the best place to read the polished guides for:
+Preview that built site locally with:
+
+```bash
+npm run docs:preview
+```
+
+The published docs site is the best place to read the polished guides for:
 
 * create / replace / patch semantics
 * nested object and array contracts
@@ -46,7 +41,7 @@ The docs site is the best place to read the polished guides for:
 * demo app walkthroughs
 * fair comparisons with libraries like TypeBox, Joi, Zod, and Valibot
 
-## 1. Getting Started: Your First Schema
+## Getting Started: Your First Schema
 
 Let's start with a common use case: validating a user registration form.
 
@@ -94,7 +89,7 @@ if (Object.keys(errors).length > 0) {
 
 ---
 
-## 2. Understanding the Validation Result
+## Understanding the Validation Result
 
 The schema operation methods return an object with two properties: `validatedObject` and `errors`.
 
@@ -1819,7 +1814,7 @@ That means the transport export stays aligned with runtime semantics:
 
 ---
 
-## 3. Common REST Recipes
+## Common REST Recipes
 
 This section is intentionally practical. These are the shapes you are likely to define in a real API.
 
@@ -2099,7 +2094,7 @@ This is useful when the persistence layer or surrounding business logic decides 
 
 ---
 
-## 4. Built-in Rules Reference
+## Built-in Rules Reference
 
 Here is a complete list of all types and validators available out of the box.
 
@@ -2153,7 +2148,7 @@ Validators are rules that run after a value has been cast to its proper type.
 
 ---
 
-## 5. Extending the Library: Custom Rules
+## Extending the Library: Custom Rules
 
 The real power of the library comes from its extensibility. You can easily add your own reusable types and validators. They must stay synchronous so the schema remains portable across environments. When you do this, you'll be passed a powerful `context` object.
 
@@ -2237,7 +2232,7 @@ console.log(validatedObject.tags);
 
 ---
 
-## 6. Advanced: Creating a Plugin
+## Advanced: Creating a Plugin
 
 If you create a lot of custom types and validators for your project, you can bundle them into a single, reusable **Plugin**. A plugin is just an object with an `install` method.
 
@@ -2280,9 +2275,18 @@ This makes your custom rules portable and keeps your main application setup clea
 
 ---
 
-## 7. Database-Agnostic Focus
+## Design Scope
 
-`json-rest-schema` is deliberately scoped to runtime validation and transformation. It no longer ships helpers for creating database tables or migrations, and it does not prescribe a specific persistence layer. Treat the schemas you build with this library as the canonical description of your data when you design storage models, migrations, API responses, or documentation.
+`json-rest-schema` is intentionally **synchronous**. Shared schemas need to run the same way on the client and the server, so this library is scoped to:
+
+* typing and casting
+* normalization
+* local field validation
+* local cross-field validation
+
+It is **not** the place for database-backed uniqueness checks, external API lookups, or any other stateful async business rule. Put those checks in higher layers such as services, repositories, or actions after schema validation has produced a normalized payload.
+
+`json-rest-schema` is also deliberately scoped to runtime validation and transformation. It does not prescribe a specific persistence layer. Treat the schemas you build with this library as the canonical description of your data when you design storage models, migrations, API responses, or documentation.
 
 If you pair the library with a database toolkit (such as Knex), keep the tooling concerns separate: write migrations and models in the tool that best fits your project, then reuse the same field definitions inside `createSchema` so validation, casting, and persistence stay aligned.
 

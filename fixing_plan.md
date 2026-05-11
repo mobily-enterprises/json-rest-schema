@@ -64,18 +64,18 @@ fallbacks, or machine-specific assumptions.
 
 ## 4. Array `undefined` And Sparse Slots
 
-- [ ] Root cause: `_validateArrayItems()` sends item values directly into the
+- [x] Root cause: `_validateArrayItems()` sends item values directly into the
   normalizer without the explicit-undefined handling used by top-level fields
   and typed object maps.
-- [ ] Smallest correct fix: add the same explicit-undefined branch to array item
+- [x] Smallest correct fix: add the same explicit-undefined branch to array item
   validation before item normalization or schema-backed item validation.
-- [ ] Treat sparse slots as invalid under `rejectExplicitUndefined` rather than
+- [x] Treat sparse slots as invalid under `rejectExplicitUndefined` rather than
   materializing holes as empty strings or throwing raw `TypeError`s.
-- [ ] Why this will not drift: top-level fields, object-map values, and array
+- [x] Why this will not drift: top-level fields, object-map values, and array
   items will all honor the same operation flag.
-- [ ] Alternatives rejected: compacting arrays or skipping holes, because either
+- [x] Alternatives rejected: compacting arrays or skipping holes, because either
   silently changes caller data.
-- [ ] Regression tests: `[undefined]`, sparse arrays, and schema-backed
+- [x] Regression tests: `[undefined]`, sparse arrays, and schema-backed
   undefined items return item-path `TYPE_CAST_FAILED` errors.
 
 ## 5. Registry Merge Handler Equivalence

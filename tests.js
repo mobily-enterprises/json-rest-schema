@@ -820,6 +820,48 @@ describe('2. Core Validation Logic (`Schema.js`)', () => {
       assertError(errors, 'assignableRoleIds.1', 'MIN_LENGTH')
     })
 
+    it('should reject explicit undefined and sparse array items with stable item paths', () => {
+      const primitiveItemsSchema = createSchema({
+        tags: {
+          type: 'array',
+          items: { type: 'string' }
+        }
+      })
+      const sparseTags = []
+      sparseTags[1] = '  ok  '
+
+      const explicitUndefinedResult = primitiveItemsSchema.create({
+        tags: [undefined]
+      })
+      const sparseResult = primitiveItemsSchema.create({
+        tags: sparseTags
+      })
+
+      assertError(explicitUndefinedResult.errors, 'tags.0', 'TYPE_CAST_FAILED')
+      assertError(sparseResult.errors, 'tags.0', 'TYPE_CAST_FAILED')
+      assert.strictEqual(sparseResult.validatedObject.tags.length, 2)
+      assert.strictEqual(Object.hasOwn(sparseResult.validatedObject.tags, 0), false)
+      assert.strictEqual(sparseResult.validatedObject.tags[1], 'ok')
+
+      const schemaBackedItemsSchema = createSchema({
+        roles: {
+          type: 'array',
+          items: roleSchema
+        }
+      })
+      const schemaBackedResult = schemaBackedItemsSchema.create({
+        roles: [undefined]
+      })
+
+      assertError(schemaBackedResult.errors, 'roles.0', 'TYPE_CAST_FAILED')
+
+      const selectedResult = primitiveItemsSchema.validateAt('tags.0', {
+        tags: []
+      })
+
+      assertError(selectedResult.errors, 'tags.0', 'TYPE_CAST_FAILED')
+    })
+
     it('should support skipping nested fields and nested validator params by dotted paths', () => {
       const schema = createSchema({
         workspace: { type: 'object', required: true, schema: workspaceSummarySchema }

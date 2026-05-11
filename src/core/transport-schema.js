@@ -3,6 +3,7 @@ import {
   resolveObjectFieldMode,
   resolveObjectValuesConfig
 } from './nested-contract.js'
+import { isNumericDefinition } from './definition-helpers.js'
 
 const JSON_SCHEMA_DRAFT_07 = 'http://json-schema.org/draft-07/schema#'
 const JSON_REST_EXTENSION_KEY = 'x-json-rest-schema'
@@ -64,8 +65,8 @@ const BUILTIN_TYPE_EXPORTERS = {
 const BUILTIN_VALIDATOR_EXPORTERS = {
   minLength: ({ definition, parameterValue }) => definition.type === 'string' ? { minLength: parameterValue } : null,
   maxLength: ({ definition, parameterValue }) => definition.type === 'string' ? { maxLength: parameterValue } : null,
-  min: ({ definition, parameterValue }) => (definition.type === 'number' || definition.type === 'integer') ? { minimum: parameterValue } : null,
-  max: ({ definition, parameterValue }) => (definition.type === 'number' || definition.type === 'integer') ? { maximum: parameterValue } : null,
+  min: ({ definition, parameterValue }) => isNumericDefinition(definition) ? { minimum: parameterValue } : null,
+  max: ({ definition, parameterValue }) => isNumericDefinition(definition) ? { maximum: parameterValue } : null,
   pattern: ({ definition, parameterValue }) => definition.type === 'string'
     ? { pattern: parameterValue instanceof RegExp ? parameterValue.source : parameterValue }
     : null,

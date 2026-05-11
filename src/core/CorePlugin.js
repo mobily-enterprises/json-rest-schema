@@ -144,17 +144,22 @@ const CorePlugin = {
       return numberValue
     })
     addType('timestamp', context => {
+      if (typeof context.value === 'string' && context.value.trim() === '') {
+        context.throwTypeError()
+      }
       const r = Number(context.value)
       if (isNaN(r)) context.throwTypeError()
-      if (!r && context.computedOptions.nullable) return null
       return r
     })
     addType('dateTime', context => {
-      if (!context.value || context.value === '') return null
+      if (typeof context.value === 'string' && context.value.trim() === '') {
+        context.throwTypeError()
+      }
 
       // If already a Date object, return it
       if (context.value instanceof Date) {
-        return isNaN(context.value.getTime()) ? null : context.value
+        if (isNaN(context.value.getTime())) context.throwTypeError()
+        return context.value
       }
 
       // Handle string values
@@ -177,7 +182,7 @@ const CorePlugin = {
       // Try to parse the value normally
       const d = new Date(context.value)
       if (isNaN(d.getTime())) {
-        return null
+        context.throwTypeError()
       }
 
       // Return the Date object directly - let Knex handle the database formatting

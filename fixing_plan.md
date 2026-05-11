@@ -46,20 +46,20 @@ fallbacks, or machine-specific assumptions.
 
 ## 3. `dateTime` And `timestamp` Null Bugs
 
-- [ ] Root cause: temporal type handlers encode nullability decisions
+- [x] Root cause: temporal type handlers encode nullability decisions
   themselves. `dateTime` returns `null` for invalid non-empty values, and
   `timestamp` treats numeric zero as nullable because it checks falsiness.
-- [ ] Smallest correct fix: keep null and empty-string handling in
+- [x] Smallest correct fix: keep null and empty-string handling in
   `_castValue`; make temporal type handlers only parse valid values or throw
   type errors.
-- [ ] Change `dateTime` so invalid non-empty values throw `TYPE_CAST_FAILED`.
-- [ ] Change `timestamp` so finite `0` remains `0`; only explicit nullability
+- [x] Change `dateTime` so invalid non-empty values throw `TYPE_CAST_FAILED`.
+- [x] Change `timestamp` so finite `0` remains `0`; only explicit nullability
   paths produce `null`.
-- [ ] Why this will not drift: nullability behavior stays centralized in one
+- [x] Why this will not drift: nullability behavior stays centralized in one
   validation layer instead of being reimplemented by each type handler.
-- [ ] Alternatives rejected: documenting current behavior, because accepting
+- [x] Alternatives rejected: documenting current behavior, because accepting
   invalid dates is a contract bug.
-- [ ] Regression tests: invalid `dateTime` fails; `timestamp: 0` remains `0`;
+- [x] Regression tests: invalid `dateTime` fails; `timestamp: 0` remains `0`;
   explicit nullable `null` still works.
 
 ## 4. Array `undefined` And Sparse Slots

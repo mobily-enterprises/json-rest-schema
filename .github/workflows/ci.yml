@@ -20,9 +20,21 @@ jobs:
         with:
           node-version: 20
           cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            demos/react-rhf/package-lock.json
+            demos/vue-vuetify/package-lock.json
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Install demo dependencies
+        run: |
+          npm ci --prefix demos/react-rhf
+          npm ci --prefix demos/vue-vuetify
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
 
       - name: Verify no vendored node_modules are tracked
         run: test -z "$(git ls-files node_modules)"
@@ -33,13 +45,19 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: Test demos
+        run: npm run test:demos
+
+      - name: Build docs
+        run: npm run docs:build
+
       - name: Verify package contents
         run: |
           npm pack --dry-run --json > pack-output.json
           node -e "const fs = require('node:fs'); const files = JSON.parse(fs.readFileSync('pack-output.json', 'utf8'))[0].files.map(file => file.path); if (!files.includes('LICENSE')) throw new Error('LICENSE is missing from npm package contents.');"
           rm pack-output.json
 
-      - name: Verify install leaves tracked files clean
+      - name: Verify install and build leave tracked files clean
         run: |
           git diff --exit-code
           git diff --cached --exit-code

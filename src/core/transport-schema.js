@@ -4,6 +4,7 @@ import {
   resolveObjectValuesConfig
 } from './nested-contract.js'
 import { isNumericDefinition } from './definition-helpers.js'
+import { isPlainObject } from '../utils/object-helpers.js'
 import { setOwnProperty } from '../utils/path-helpers.js'
 
 const JSON_SCHEMA_DRAFT_07 = 'http://json-schema.org/draft-07/schema#'
@@ -13,10 +14,6 @@ const EXPORT_CONTEXT_KEY = Symbol('json-rest-schema.exportContext')
 
 const BOOLEAN_TRUE_VALUES = ['true', '1', 'yes', 'y', 'on']
 const BOOLEAN_FALSE_VALUES = ['false', '0', 'no', 'n', 'off']
-
-function isPlainObject (value) {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-}
 
 function extensionMetadataFragment (section, values) {
   return {

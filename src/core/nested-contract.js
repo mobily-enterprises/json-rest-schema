@@ -1,6 +1,4 @@
-function isPlainObject (value) {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-}
+import { isPlainObject } from '../utils/object-helpers.js'
 
 function isSchemaLike (value) {
   return value !== null &&

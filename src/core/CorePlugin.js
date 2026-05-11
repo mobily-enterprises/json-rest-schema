@@ -382,7 +382,7 @@ const CorePlugin = {
 
       const patternValue = context.parameterValue
       const matcher = patternValue instanceof RegExp
-        ? patternValue
+        ? new RegExp(patternValue.source, patternValue.flags)
         : typeof patternValue === 'string'
           ? new RegExp(patternValue)
           : null
@@ -432,9 +432,7 @@ const CorePlugin = {
       }
     })
     addValidator('notEmpty', context => {
-      const bc = context.valueBeforeCast
-      const bcs = (bc !== undefined && bc !== null && bc.toString) ? bc.toString() : ''
-      if (context.parameterValue && !Array.isArray(context.value) && bc !== undefined && bcs === '') {
+      if (context.parameterValue && typeof context.value === 'string' && context.value === '') {
         context.throwParamError('NOT_EMPTY', 'Field cannot be empty.')
       }
     })

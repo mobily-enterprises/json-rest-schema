@@ -111,18 +111,18 @@ fallbacks, or machine-specific assumptions.
 
 ## 7. Stateful `pattern` And Whitespace `notEmpty`
 
-- [ ] Root cause: `pattern` reuses caller-provided `RegExp` instances, so
+- [x] Root cause: `pattern` reuses caller-provided `RegExp` instances, so
   global/sticky regex `lastIndex` state changes validation results. `notEmpty`
   checks `valueBeforeCast`, so whitespace-only strings pass after trimming.
-- [ ] Smallest correct fix: clone `RegExp` values before testing, or reset
+- [x] Smallest correct fix: clone `RegExp` values before testing, or reset
   `lastIndex` before every test. Prefer cloning so user-owned regex objects are
   not mutated.
-- [ ] Change `notEmpty` to evaluate the post-cast value for string fields.
-- [ ] Why this will not drift: validators become deterministic per call and
+- [x] Change `notEmpty` to evaluate the post-cast value for string fields.
+- [x] Why this will not drift: validators become deterministic per call and
   string emptiness is checked after normalization.
-- [ ] Alternatives rejected: requiring users to avoid global regexes, because
+- [x] Alternatives rejected: requiring users to avoid global regexes, because
   the library can make matching deterministic itself.
-- [ ] Regression tests: repeated validations with `/a/g` all pass consistently;
+- [x] Regression tests: repeated validations with `/a/g` all pass consistently;
   `"   "` with `notEmpty: true` fails.
 
 ## 8. Packaging And Repo Hygiene

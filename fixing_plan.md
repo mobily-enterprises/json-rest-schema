@@ -29,18 +29,18 @@ fallbacks, or machine-specific assumptions.
 
 ## 2. Integer `min` / `max` Runtime Drift
 
-- [ ] Root cause: runtime `min` and `max` validators only apply to
+- [x] Root cause: runtime `min` and `max` validators only apply to
   `type: 'number'`, while transport export applies them to both `number` and
   `integer`.
-- [ ] Smallest correct fix: apply runtime `min` and `max` checks to both
+- [x] Smallest correct fix: apply runtime `min` and `max` checks to both
   `number` and `integer`.
-- [ ] Prefer a tiny shared predicate for numeric definitions if it keeps runtime
+- [x] Prefer a tiny shared predicate for numeric definitions if it keeps runtime
   and export logic aligned without broad refactoring.
-- [ ] Why this will not drift: the runtime validator and JSON Schema exporter
+- [x] Why this will not drift: the runtime validator and JSON Schema exporter
   will agree on which field types support numeric bounds.
-- [ ] Alternatives rejected: removing integer bounds from JSON Schema, because
+- [x] Alternatives rejected: removing integer bounds from JSON Schema, because
   runtime should honor declared schema contracts instead.
-- [ ] Regression tests: integer below `min` fails with `MIN_VALUE`; integer above
+- [x] Regression tests: integer below `min` fails with `MIN_VALUE`; integer above
   `max` fails with `MAX_VALUE`; exported JSON Schema still includes
   `minimum` / `maximum`.
 

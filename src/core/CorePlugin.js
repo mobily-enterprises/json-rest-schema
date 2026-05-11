@@ -3,6 +3,7 @@
  */
 
 import * as flatted from 'flatted'
+import { isNumericDefinition } from './definition-helpers.js'
 
 /**
  * @typedef {import('./Schema.js').ValidationContext} ValidationContext
@@ -340,7 +341,7 @@ const CorePlugin = {
 
     addValidator('min', context => {
       if (context.value === undefined) return
-      if (context.definition.type === 'number' && typeof context.value === 'number' && context.value < context.parameterValue) {
+      if (isNumericDefinition(context.definition) && typeof context.value === 'number' && context.value < context.parameterValue) {
         context.throwParamError('MIN_VALUE', `Value must be at least ${context.parameterValue}.`, { min: context.parameterValue, actual: context.value })
       }
     })
@@ -353,7 +354,7 @@ const CorePlugin = {
 
     addValidator('max', context => {
       if (context.value === undefined) return
-      if (context.definition.type === 'number' && typeof context.value === 'number' && context.value > context.parameterValue) {
+      if (isNumericDefinition(context.definition) && typeof context.value === 'number' && context.value > context.parameterValue) {
         context.throwParamError('MAX_VALUE', `Value must be no more than ${context.parameterValue}.`, { max: context.parameterValue, actual: context.value })
       }
     })

@@ -2992,17 +2992,21 @@ describe('4. Core Plugin: Validator Handlers', () => {
   it('`min`/`max` validators should work for numbers, `minLength`/`maxLength` for strings', () => {
     const schema = createSchema({
       num: { type: 'number', min: 10, max: 20 },
+      int: { type: 'integer', min: 2, max: 4 },
       str: { type: 'string', minLength: 3, maxLength: 5 },
     })
 
-    const { errors: err1 } = schema.create({ num: 9, str: 'hi' })
+    const { errors: err1 } = schema.create({ num: 9, int: 1, str: 'hi' })
     assertError(err1, 'num', 'MIN_VALUE')
+    assertError(err1, 'int', 'MIN_VALUE')
     assertError(err1, 'str', 'MIN_LENGTH')
     assert.deepStrictEqual(err1.num.params, { min: 10, actual: 9 })
+    assert.deepStrictEqual(err1.int.params, { min: 2, actual: 1 })
     assert.deepStrictEqual(err1.str.params, { min: 3, actual: 2 })
 
-    const { errors: err2 } = schema.create({ num: 21, str: 'hello world' })
+    const { errors: err2 } = schema.create({ num: 21, int: 5, str: 'hello world' })
     assertError(err2, 'num', 'MAX_VALUE')
+    assertError(err2, 'int', 'MAX_VALUE')
     assertError(err2, 'str', 'MAX_LENGTH')
   })
 

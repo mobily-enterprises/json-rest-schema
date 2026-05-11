@@ -9,6 +9,10 @@
 
 import { describe, it } from 'node:test'
 import assert from 'node:assert'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { createSchema, createSchemaFactory, flattenErrors, getError, hasError, nestErrors } from './src/index.js'
 import { Schema } from './src/core/Schema.js'
 import { jsonRestSchemaResolver } from './src/adapters/react-hook-form.js'
@@ -328,6 +332,50 @@ describe('1. Core API (`createSchema`)', () => {
 
     assert.strictEqual(validatedObject.q, 'test')
     assert.strictEqual(validatedObject.status, 'ACTIVE')
+  })
+
+  it('should merge schema registries across separate installed copies of the library', async () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'json-rest-schema-copy-'))
+    try {
+      const foreignPackageRoot = path.join(tempRoot, 'foreign-copy')
+      fs.mkdirSync(foreignPackageRoot, { recursive: true })
+      fs.cpSync(path.join(process.cwd(), 'src'), path.join(foreignPackageRoot, 'src'), { recursive: true })
+      fs.mkdirSync(path.join(foreignPackageRoot, 'node_modules'), { recursive: true })
+      fs.cpSync(
+        path.join(process.cwd(), 'node_modules', 'flatted'),
+        path.join(foreignPackageRoot, 'node_modules', 'flatted'),
+        { recursive: true }
+      )
+      fs.writeFileSync(
+        path.join(foreignPackageRoot, 'package.json'),
+        JSON.stringify({
+          name: 'json-rest-schema-foreign-copy',
+          type: 'module'
+        }, null, 2)
+      )
+
+      const foreignModule = await import(pathToFileURL(path.join(foreignPackageRoot, 'src/index.js')).href)
+      const foreignSchemaFactory = foreignModule.createSchemaFactory({ installCore: false })
+      foreignSchemaFactory.addType('foreign-prefix-string', ctx => `foreign-${ctx.value}`)
+
+      const foreignSchema = foreignSchemaFactory({
+        name: {
+          type: 'foreign-prefix-string'
+        }
+      })
+
+      const mergedFactory = createSchema.createFactory(foreignSchema)
+      const mergedSchema = mergedFactory({
+        name: {
+          type: 'foreign-prefix-string'
+        }
+      })
+      const { validatedObject } = mergedSchema.patch({ name: 'test' })
+
+      assert.strictEqual(validatedObject.name, 'foreign-test')
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true })
+    }
   })
 
   it('should throw when adding a non-function type handler', () => {

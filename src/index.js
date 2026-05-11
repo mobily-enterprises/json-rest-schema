@@ -9,6 +9,7 @@ import { flattenErrors, getError, hasError, nestErrors } from './utils/error-hel
 
 const factoryTypesBySource = new WeakMap()
 const factoryValidatorsBySource = new WeakMap()
+const registryMetadataSymbol = Symbol.for('json-rest-schema.registry-metadata')
 
 function registerTypeHandler (types, name, handler) {
   if (typeof handler !== 'function') {
@@ -34,6 +35,16 @@ function installPlugin (plugin, api) {
 function attachRegistryMetadata (target, types, validators) {
   factoryTypesBySource.set(target, types)
   factoryValidatorsBySource.set(target, validators)
+
+  Object.defineProperty(target, registryMetadataSymbol, {
+    value: Object.freeze({
+      getTypes: () => types,
+      getValidators: () => validators
+    }),
+    enumerable: false,
+    configurable: false,
+    writable: false
+  })
 }
 
 function extractRegistryMetadata (source) {
@@ -43,11 +54,40 @@ function extractRegistryMetadata (source) {
 
   const types = factoryTypesBySource.get(source)
   const validators = factoryValidatorsBySource.get(source)
-  if (!types || !validators) {
-    return null
+  if (types && validators) {
+    return { types, validators }
   }
 
-  return { types, validators }
+  const symbolMetadata = source[registryMetadataSymbol]
+  if (
+    symbolMetadata &&
+    typeof symbolMetadata.getTypes === 'function' &&
+    typeof symbolMetadata.getValidators === 'function'
+  ) {
+    return {
+      types: symbolMetadata.getTypes(),
+      validators: symbolMetadata.getValidators()
+    }
+  }
+
+  if (
+    typeof source === 'object' &&
+    source.types &&
+    typeof source.types === 'object' &&
+    source.validators &&
+    typeof source.validators === 'object' &&
+    typeof source.create === 'function' &&
+    typeof source.replace === 'function' &&
+    typeof source.patch === 'function' &&
+    typeof source.toJsonSchema === 'function'
+  ) {
+    return {
+      types: source.types,
+      validators: source.validators
+    }
+  }
+
+  return null
 }
 
 function normalizeFactorySources (sources) {
@@ -58,9 +98,21 @@ function normalizeFactorySources (sources) {
   return sources
 }
 
+function areEquivalentHandlers (left, right) {
+  if (left === right) {
+    return true
+  }
+
+  if (typeof left !== 'function' || typeof right !== 'function') {
+    return false
+  }
+
+  return Function.prototype.toString.call(left) === Function.prototype.toString.call(right)
+}
+
 function mergeRegistryHandlers (target, source, kind) {
   for (const [name, handler] of Object.entries(source)) {
-    if (Object.hasOwn(target, name) && target[name] !== handler) {
+    if (Object.hasOwn(target, name) && !areEquivalentHandlers(target[name], handler)) {
       throw new Error(`Cannot merge schema factories with conflicting ${kind} "${name}".`)
     }
     target[name] = handler

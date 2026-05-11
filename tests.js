@@ -2639,6 +2639,21 @@ describe('2.5. Transport JSON Schema Export', () => {
     )
   })
 
+  it('should export prototype-sensitive field names as own JSON Schema properties', () => {
+    const structure = JSON.parse('{"__proto__":{"type":"string"},"constructor":{"type":"string"},"toString":{"type":"string"}}')
+    const schema = createSchema(structure)
+    const transportSchema = schema.toJsonSchema()
+
+    assert.strictEqual(Object.hasOwn(transportSchema.properties, '__proto__'), true)
+    assert.strictEqual(Object.hasOwn(transportSchema.properties, 'constructor'), true)
+    assert.strictEqual(Object.hasOwn(transportSchema.properties, 'toString'), true)
+    assert.deepStrictEqual(Object.getOwnPropertyDescriptor(transportSchema.properties, '__proto__').value, {
+      type: 'string',
+      'x-json-rest-schema': { castType: 'string' }
+    })
+    assert.strictEqual(Object.getPrototypeOf(transportSchema.properties), Object.prototype)
+  })
+
   it('should allow additionalProperties to be configured explicitly', () => {
     const schema = createSchema({ id: { type: 'id' } })
     const transportSchema = schema.toJsonSchema({ additionalProperties: true })

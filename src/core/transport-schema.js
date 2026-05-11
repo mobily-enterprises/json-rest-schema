@@ -4,6 +4,7 @@ import {
   resolveObjectValuesConfig
 } from './nested-contract.js'
 import { isNumericDefinition } from './definition-helpers.js'
+import { setOwnProperty } from '../utils/path-helpers.js'
 
 const JSON_SCHEMA_DRAFT_07 = 'http://json-schema.org/draft-07/schema#'
 const JSON_REST_EXTENSION_KEY = 'x-json-rest-schema'
@@ -384,7 +385,7 @@ function buildSchemaObjectFragment (schema, options, operationName, operation, a
   const required = []
 
   for (const [fieldName, definition] of Object.entries(schema.structure)) {
-    properties[fieldName] = buildFieldSchema(schema, fieldName, definition, options, operationName, operation)
+    setOwnProperty(properties, fieldName, buildFieldSchema(schema, fieldName, definition, options, operationName, operation))
     if (operation.enforceRequired && definition.required === true) {
       required.push(fieldName)
     }

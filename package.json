@@ -14,7 +14,7 @@
     "javascript"
   ],
   "author": "Tony Mobily",
-  "license": "GPL-3.0-only",
+  "license": "(GPL-3.0-only OR MIT)",
   "homepage": "https://mobily-enterprises.github.io/json-rest-schema/",
   "repository": {
     "type": "git",

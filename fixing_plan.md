@@ -153,13 +153,13 @@ fallbacks, or machine-specific assumptions.
 
 ## Verification Checklist
 
-- [ ] `npm test`
-- [ ] `npm run lint`
-- [ ] `npm run test:demos`
-- [ ] `npm pack --dry-run`
-- [ ] `npm ls --depth=0`
-- [ ] `npm --prefix demos/react-rhf ls --depth=0`
-- [ ] `npm --prefix demos/vue-vuetify ls --depth=0`
-- [ ] In a temp worktree: `npm ci`
-- [ ] In a temp worktree: install demo deps with `npm ci`
-- [ ] In a temp worktree: `npm run docs:build`
+- [x] `npm test`
+- [x] `npm run lint`
+- [x] `npm run test:demos`
+- [x] `npm pack --dry-run`
+- [x] `npm ls --depth=0`
+- [x] `npm --prefix demos/react-rhf ls --depth=0`
+- [x] `npm --prefix demos/vue-vuetify ls --depth=0`
+- [x] In a temp worktree: `npm ci`
+- [x] In a temp worktree: install demo deps with `npm ci`
+- [x] In a temp worktree: `npm run docs:build`

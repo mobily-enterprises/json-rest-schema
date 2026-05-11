@@ -678,6 +678,50 @@ describe('2. Core Validation Logic (`Schema.js`)', () => {
       assertError(errors, 'name', 'TYPE_CAST_FAILED')
     })
 
+    it('operation methods should reject non-plain root inputs and accept null-prototype objects', () => {
+      const customSchema = createSchema({
+        name: { type: 'string' }
+      }, {
+        operations: {
+          upsert: {
+            targetFields: 'input',
+            enforceRequired: false,
+            applyDefaults: false,
+            outputFields: 'input'
+          }
+        }
+      })
+      const nullPrototypeInput = Object.create(null)
+      nullPrototypeInput.name = '  Alex  '
+
+      assert.throws(
+        () => schema.create([]),
+        /create\(\) expects a plain object input\./
+      )
+      assert.throws(
+        () => schema.replace(null),
+        /replace\(\) expects a plain object input\./
+      )
+      assert.throws(
+        () => schema.patch(new Date('2025-01-01T00:00:00Z')),
+        /patch\(\) expects a plain object input\./
+      )
+      assert.throws(
+        () => customSchema.upsert(/name/),
+        /upsert\(\) expects a plain object input\./
+      )
+      assert.throws(
+        () => customSchema.upsert(new Map([['name', 'Alex']])),
+        /upsert\(\) expects a plain object input\./
+      )
+
+      const { validatedObject, errors } = schema.patch(nullPrototypeInput)
+      assert.deepStrictEqual(errors, {})
+      assert.deepStrictEqual(validatedObject, {
+        name: 'Alex'
+      })
+    })
+
     it('built-in operations should be overrideable via the operation registry', () => {
       const customSchema = createSchema({
         name: { type: 'string', required: true },
@@ -2981,6 +3025,9 @@ describe('2.5. Transport JSON Schema Export', () => {
 })
 
 describe('3. Core Plugin: Type Handlers', () => {
+  const nullPrototypeObject = Object.create(null)
+  nullPrototypeObject.nested = true
+
   const testCases = [
     // None
     { type: 'none', input: { field: 123 }, expected: 123 },
@@ -3023,8 +3070,12 @@ describe('3. Core Plugin: Type Handlers', () => {
 
     // Object
     { type: 'object', input: { field: { nested: true } }, expected: { nested: true } },
+    { type: 'object', input: { field: nullPrototypeObject }, expected: nullPrototypeObject },
     { type: 'object', input: { field: 'not-an-object' }, error: 'TYPE_CAST_FAILED' },
     { type: 'object', input: { field: ['nope'] }, error: 'TYPE_CAST_FAILED' },
+    { type: 'object', input: { field: new Date('2025-01-01T00:00:00Z') }, error: 'TYPE_CAST_FAILED' },
+    { type: 'object', input: { field: /nope/ }, error: 'TYPE_CAST_FAILED' },
+    { type: 'object', input: { field: new Map([['nested', true]]) }, error: 'TYPE_CAST_FAILED' },
 
     // Boolean
     { type: 'boolean', input: { field: 'true' }, expected: true },

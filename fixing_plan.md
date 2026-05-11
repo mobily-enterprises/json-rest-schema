@@ -95,18 +95,18 @@ fallbacks, or machine-specific assumptions.
 
 ## 6. Plain-Object Checks And Root Input Validation
 
-- [ ] Root cause: current `isPlainObject()` only rejects `null` and arrays, and
+- [x] Root cause: current `isPlainObject()` only rejects `null` and arrays, and
   full operation validation does not assert plain-object root input.
-- [ ] Smallest correct fix: define a real plain-object check that accepts only
+- [x] Smallest correct fix: define a real plain-object check that accepts only
   `Object.prototype` or null-prototype objects.
-- [ ] Use that check in the built-in `object` type.
-- [ ] Call `_assertPlainObjectInput()` from `validateWith()` so `create`,
+- [x] Use that check in the built-in `object` type.
+- [x] Call `_assertPlainObjectInput()` from `validateWith()` so `create`,
   `replace`, `patch`, and custom operation aliases reject invalid root inputs.
-- [ ] Why this will not drift: root inputs, object fields, nested contracts, and
+- [x] Why this will not drift: root inputs, object fields, nested contracts, and
   adapter assumptions all share the same object contract.
-- [ ] Alternatives rejected: allowing class instances by default, because nested
+- [x] Alternatives rejected: allowing class instances by default, because nested
   validation expects predictable own enumerable data.
-- [ ] Regression tests: root arrays, `null`, `Date`, `RegExp`, and `Map` fail
+- [x] Regression tests: root arrays, `null`, `Date`, `RegExp`, and `Map` fail
   clearly; object fields reject `Date`, `RegExp`, and `Map`.
 
 ## 7. Stateful `pattern` And Whitespace `notEmpty`

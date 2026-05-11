@@ -334,6 +334,60 @@ describe('1. Core API (`createSchema`)', () => {
     assert.strictEqual(validatedObject.status, 'ACTIVE')
   })
 
+  it('should reject same-source custom type closures with different captured state during merge', () => {
+    const makeSchemaWithPrefix = prefix => {
+      const schemaFactory = createSchemaFactory({ installCore: false })
+      schemaFactory.addType('closure-prefixed-string', ctx => `${prefix}-${ctx.value}`)
+      return schemaFactory({
+        name: {
+          type: 'closure-prefixed-string'
+        }
+      })
+    }
+
+    const firstSchema = makeSchemaWithPrefix('first')
+    const secondSchema = makeSchemaWithPrefix('second')
+
+    assert.strictEqual(
+      Function.prototype.toString.call(firstSchema.types['closure-prefixed-string']),
+      Function.prototype.toString.call(secondSchema.types['closure-prefixed-string'])
+    )
+    assert.notStrictEqual(
+      firstSchema.types['closure-prefixed-string'],
+      secondSchema.types['closure-prefixed-string']
+    )
+    assert.throws(() => {
+      createSchema.createFactory([firstSchema, secondSchema])
+    }, /Cannot merge schema factories with conflicting type "closure-prefixed-string"/)
+  })
+
+  it('should reject same-source custom validator closures with different captured state during merge', () => {
+    const makeSchemaWithExpectedValue = expected => {
+      const schemaFactory = createSchemaFactory({ installCore: false })
+      schemaFactory.addValidator('closure-expected-value', ctx => {
+        if (ctx.value !== expected) {
+          ctx.throwParamError('EXPECTED_VALUE', 'Value did not match expected value.')
+        }
+      })
+      return schemaFactory({})
+    }
+
+    const firstSchema = makeSchemaWithExpectedValue('first')
+    const secondSchema = makeSchemaWithExpectedValue('second')
+
+    assert.strictEqual(
+      Function.prototype.toString.call(firstSchema.validators['closure-expected-value']),
+      Function.prototype.toString.call(secondSchema.validators['closure-expected-value'])
+    )
+    assert.notStrictEqual(
+      firstSchema.validators['closure-expected-value'],
+      secondSchema.validators['closure-expected-value']
+    )
+    assert.throws(() => {
+      createSchema.createFactory([firstSchema, secondSchema])
+    }, /Cannot merge schema factories with conflicting validator "closure-expected-value"/)
+  })
+
   it('should merge schema registries across separate installed copies of the library', async () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'json-rest-schema-copy-'))
     try {

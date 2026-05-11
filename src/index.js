@@ -99,15 +99,7 @@ function normalizeFactorySources (sources) {
 }
 
 function areEquivalentHandlers (left, right) {
-  if (left === right) {
-    return true
-  }
-
-  if (typeof left !== 'function' || typeof right !== 'function') {
-    return false
-  }
-
-  return Function.prototype.toString.call(left) === Function.prototype.toString.call(right)
+  return left === right
 }
 
 function mergeRegistryHandlers (target, source, kind) {

@@ -491,6 +491,18 @@ describe('2. Core Validation Logic (`Schema.js`)', () => {
     assertError(errors, 'extra', 'FIELD_NOT_ALLOWED')
   })
 
+  it('should report prototype-sensitive unknown fields without using inherited schema properties', () => {
+    const schema = createSchema({ name: { type: 'string' } })
+    const payload = JSON.parse('{"toString":"x","constructor":"y","__proto__":{"polluted":true}}')
+    const { errors } = schema.patch(payload)
+
+    assertError(errors, 'toString', 'FIELD_NOT_ALLOWED')
+    assertError(errors, 'constructor', 'FIELD_NOT_ALLOWED')
+    assertError(errors, '__proto__', 'FIELD_NOT_ALLOWED')
+    assert.strictEqual({}.polluted, undefined)
+    assert.strictEqual(Object.hasOwn(errors, '__proto__'), true)
+  })
+
   it('should correctly handle the `required` validator', () => {
     const schema = createSchema({ name: { type: 'string', required: true } })
     const { errors } = schema.create({})
@@ -1350,6 +1362,7 @@ describe('2.25. Error Helper Utilities', () => {
   it('hasError should report whether a path is present in the flat error map', () => {
     assert.strictEqual(hasError(sampleErrors, 'name'), true)
     assert.strictEqual(hasError(sampleErrors, 'workspace.id'), false)
+    assert.strictEqual(hasError({}, 'toString'), false)
   })
 
   it('helpers should tolerate missing error maps gracefully', () => {
@@ -1391,6 +1404,33 @@ describe('2.25. Error Helper Utilities', () => {
       }),
       /nestErrors\(\) received an invalid path "workspace\.\.slug"\./
     )
+  })
+
+  it('nested error helpers should reject unsafe path segments without polluting prototypes', () => {
+    const pollutedError = {
+      field: '__proto__.polluted',
+      code: 'POLLUTED',
+      message: 'Polluted',
+      params: {}
+    }
+
+    assert.throws(
+      () => nestErrors({
+        '__proto__.polluted': pollutedError
+      }),
+      /nestErrors\(\) received unsafe path segment "__proto__"\./
+    )
+
+    assert.throws(
+      () => flattenErrors({
+        constructor: {
+          prototype: pollutedError
+        }
+      }),
+      /flattenErrors\(\) received unsafe path segment "constructor"\./
+    )
+
+    assert.strictEqual({}.polluted, undefined)
   })
 
   it('nestErrors should reject conflicting leaf and descendant paths clearly', () => {
@@ -2028,6 +2068,21 @@ describe('2.36. Vue + Vuetify Adapters', () => {
     assert.strictEqual(field.value, '  Alex  ')
     assert.strictEqual(field.hasError, false)
     assert.deepStrictEqual(field.messages, [])
+  })
+
+  it('useSchemaField should reject unsafe write paths without polluting prototypes', () => {
+    const schema = createSchema({
+      name: { type: 'string' }
+    })
+    const values = {}
+    const form = useSchemaForm(schema, { values })
+
+    assert.throws(
+      () => useSchemaField(form, '__proto__.polluted').setValue('yes'),
+      /setNestedValue\(\) received unsafe path segment "__proto__"\./
+    )
+    assert.strictEqual({}.polluted, undefined)
+    assert.deepStrictEqual(values, {})
   })
 
   it('useSchemaForm should honor custom operations', () => {

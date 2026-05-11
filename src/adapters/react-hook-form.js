@@ -3,28 +3,14 @@
  */
 
 import { Schema } from '../core/Schema.js'
-
-function isPlainObject (value) {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-}
-
-function cloneValue (value) {
-  if (Array.isArray(value)) {
-    return value.map(item => cloneValue(item))
-  }
-
-  if (isPlainObject(value)) {
-    const clonedObject = {}
-
-    for (const [key, nestedValue] of Object.entries(value)) {
-      clonedObject[key] = cloneValue(nestedValue)
-    }
-
-    return clonedObject
-  }
-
-  return value
-}
+import {
+  cloneValue,
+  getNestedValue,
+  isPlainObject,
+  setNestedValue,
+  uniqueNormalizedPaths
+} from '../utils/adapter-helpers.js'
+import { setOwnProperty } from '../utils/path-helpers.js'
 
 function mergeValues (target, source) {
   if (Array.isArray(source)) {
@@ -42,33 +28,13 @@ function mergeValues (target, source) {
     const output = isPlainObject(target) ? target : {}
 
     for (const [key, nestedValue] of Object.entries(source)) {
-      output[key] = mergeValues(output[key], nestedValue)
+      setOwnProperty(output, key, mergeValues(output[key], nestedValue))
     }
 
     return output
   }
 
   return source
-}
-
-function normalizeFieldPath (path) {
-  if (typeof path !== 'string') return path
-
-  const normalizedPath = path
-    .replace(/\[(.+?)\]/g, '.$1')
-    .replace(/^\.+/, '')
-    .replace(/\.+/g, '.')
-    .replace(/\.$/, '')
-
-  return normalizedPath
-}
-
-function uniqueNormalizedPaths (paths = []) {
-  return [...new Set(
-    paths
-      .map(path => normalizeFieldPath(path))
-      .filter(path => typeof path === 'string' && path !== '')
-  )]
 }
 
 function escapePathForRegExp (path) {
@@ -80,52 +46,13 @@ function isNameInFieldArray (names, path) {
   return names.some(name => name.match(`^${escapedPath}\\.\\d+`))
 }
 
-function createContainer (nextSegment) {
-  return /^[0-9]+$/.test(nextSegment) ? [] : {}
-}
-
-function setNestedValue (target, path, value) {
-  const segments = path.split('.')
-  let currentNode = target
-
-  for (let index = 0; index < segments.length; index++) {
-    const segment = segments[index]
-    const isLast = index === segments.length - 1
-
-    if (isLast) {
-      currentNode[segment] = value
-      return
-    }
-
-    if (currentNode[segment] === undefined) {
-      currentNode[segment] = createContainer(segments[index + 1])
-    }
-
-    currentNode = currentNode[segment]
-  }
-}
-
-function getNestedValue (target, path) {
-  const segments = path.split('.')
-  let currentNode = target
-
-  for (const segment of segments) {
-    if (currentNode === null || currentNode === undefined) return undefined
-    if (typeof currentNode !== 'object') return undefined
-    if (!Object.hasOwn(currentNode, segment)) return undefined
-    currentNode = currentNode[segment]
-  }
-
-  return currentNode
-}
-
 function mapFieldsByNormalizedPath (fields = {}) {
   const mappedFields = {}
 
   for (const [path, field] of Object.entries(fields)) {
-    const normalizedPath = normalizeFieldPath(path)
-    if (normalizedPath === '') continue
-    mappedFields[normalizedPath] = field
+    const [normalizedPath] = uniqueNormalizedPaths([path])
+    if (!normalizedPath) continue
+    setOwnProperty(mappedFields, normalizedPath, field)
   }
 
   return mappedFields

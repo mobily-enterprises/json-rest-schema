@@ -2,13 +2,13 @@
  * @file Small helper utilities for working with the flat dotted-path error map.
  */
 
-function isObjectLike (value) {
-  return value !== null && typeof value === 'object'
-}
-
-function isNumericSegment (segment) {
-  return /^[0-9]+$/.test(segment)
-}
+import {
+  buildPathSegments,
+  isNumericSegment,
+  isObjectLike,
+  joinPath,
+  setOwnProperty
+} from './path-helpers.js'
 
 function isValidationErrorObject (value) {
   return isObjectLike(value) &&
@@ -16,23 +16,6 @@ function isValidationErrorObject (value) {
     typeof value.code === 'string' &&
     typeof value.message === 'string' &&
     Object.hasOwn(value, 'params')
-}
-
-function buildPathSegments (path, helperName) {
-  if (typeof path !== 'string' || path.trim() === '') {
-    throw new Error(`${helperName}() expects a non-empty dotted path string.`)
-  }
-
-  const segments = path.split('.')
-  if (segments.some(segment => segment === '')) {
-    throw new Error(`${helperName}() received an invalid path "${path}".`)
-  }
-
-  return segments
-}
-
-function joinPath (basePath, pathSegment) {
-  return basePath === '' ? String(pathSegment) : `${basePath}.${String(pathSegment)}`
 }
 
 function flattenNestedErrorsInto (nestedValue, currentPath, flatErrors) {
@@ -45,7 +28,8 @@ function flattenNestedErrorsInto (nestedValue, currentPath, flatErrors) {
       throw new Error('flattenErrors() cannot flatten a root-level error object without a path.')
     }
 
-    flatErrors[currentPath] = nestedValue
+    buildPathSegments(currentPath, 'flattenErrors')
+    setOwnProperty(flatErrors, currentPath, nestedValue)
     return
   }
 
@@ -67,7 +51,7 @@ function flattenNestedErrorsInto (nestedValue, currentPath, flatErrors) {
 export function getError (errors, path) {
   buildPathSegments(path, 'getError')
   if (!isObjectLike(errors)) return undefined
-  return errors[path]
+  return Object.hasOwn(errors, path) ? errors[path] : undefined
 }
 
 /**
@@ -99,7 +83,7 @@ export function nestErrors (errors) {
       const isLast = index === segments.length - 1
 
       if (isLast) {
-        currentNode[segment] = error
+        setOwnProperty(currentNode, segment, error)
         continue
       }
 
@@ -110,7 +94,7 @@ export function nestErrors (errors) {
 
       if (existingNode === undefined) {
         const nextSegment = segments[index + 1]
-        currentNode[segment] = isNumericSegment(nextSegment) ? [] : {}
+        setOwnProperty(currentNode, segment, isNumericSegment(nextSegment) ? [] : {})
       }
 
       currentNode = currentNode[segment]

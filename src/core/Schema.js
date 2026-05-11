@@ -40,15 +40,12 @@ import {
   buildPathSegments as buildSafePathSegments,
   setOwnProperty
 } from '../utils/path-helpers.js'
+import { isPlainObject } from '../utils/object-helpers.js'
 
 function isThenable (value) {
   return value !== null &&
     (typeof value === 'object' || typeof value === 'function') &&
     typeof value.then === 'function'
-}
-
-function isPlainObject (value) {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
 function isSchemaInstance (value) {
@@ -570,7 +567,7 @@ export class Schema {
       }
     }
 
-    if (String(rawValue) === '' && nullOnEmpty) {
+    if (rawValue === '' && nullOnEmpty) {
       setOwnProperty(currentObject, containerKey, null)
       return { errors: {}, shouldContinue: false }
     }
@@ -1254,6 +1251,8 @@ export class Schema {
     if (!operation) {
       throw new Error(`Unknown operation "${operationName}".`)
     }
+
+    this._assertPlainObjectInput(operationName, object)
 
     return this._validateWithOperation(operationName, operation, object, options)
   }

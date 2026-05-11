@@ -3,6 +3,7 @@
  */
 
 import { setOwnProperty } from './path-helpers.js'
+import { isPlainObject } from './object-helpers.js'
 
 export {
   getNestedValue,
@@ -12,9 +13,7 @@ export {
   uniqueNormalizedPaths
 } from './path-helpers.js'
 
-export function isPlainObject (value) {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-}
+export { isPlainObject } from './object-helpers.js'
 
 export function isRefLike (value) {
   return value !== null && typeof value === 'object' && Object.hasOwn(value, 'value')

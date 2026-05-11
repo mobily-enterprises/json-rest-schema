@@ -4,6 +4,7 @@
 
 import * as flatted from 'flatted'
 import { isNumericDefinition } from './definition-helpers.js'
+import { isPlainObject } from '../utils/object-helpers.js'
 
 /**
  * @typedef {import('./Schema.js').ValidationContext} ValidationContext
@@ -255,7 +256,7 @@ const CorePlugin = {
       return context.value
     })
     addType('object', context => {
-      if (context.value === null || typeof context.value !== 'object' || Array.isArray(context.value)) {
+      if (!isPlainObject(context.value)) {
         context.throwTypeError()
       }
 

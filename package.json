@@ -18,7 +18,7 @@
   "homepage": "https://mobily-enterprises.github.io/json-rest-schema/",
   "repository": {
     "type": "git",
-    "url": "git+https://mobily-enterprises/json-rest-schema.git"
+    "url": "git+https://github.com/mobily-enterprises/json-rest-schema.git"
   },
   "bugs": {
     "url": "https://github.com/mobily-enterprises/json-rest-schema/issues"
@@ -56,25 +56,15 @@
     "lint:fix": "eslint . --fix"
   },
   "dependencies": {
-    "flatted": "^3.3.3"
+    "flatted": "^3.4.2"
   },
   "devDependencies": {
     "@playwright/test": "^1.54.2",
     "eslint": "^9.37.0",
-    "knex": "^3.1.0",
     "neostandard": "^0.12.2",
-    "sqlite3": "^5.1.7",
     "vitepress": "^1.6.4"
   },
   "engines": {
     "node": ">=18.0.0"
-  },
-  "peerDependencies": {
-    "knex": ">=2.0.0"
-  },
-  "peerDependenciesMeta": {
-    "knex": {
-      "optional": true
-    }
   }
 }

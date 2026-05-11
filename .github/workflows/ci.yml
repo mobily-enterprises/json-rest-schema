@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify no vendored node_modules are tracked
+        run: test -z "$(git ls-files node_modules)"
+
+      - name: Test
+        run: npm test
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Verify package contents
+        run: |
+          npm pack --dry-run --json > pack-output.json
+          node -e "const fs = require('node:fs'); const files = JSON.parse(fs.readFileSync('pack-output.json', 'utf8'))[0].files.map(file => file.path); if (!files.includes('LICENSE')) throw new Error('LICENSE is missing from npm package contents.');"
+          rm pack-output.json
+
+      - name: Verify install leaves tracked files clean
+        run: |
+          git diff --exit-code
+          git diff --cached --exit-code

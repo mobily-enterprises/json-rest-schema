@@ -127,28 +127,29 @@ fallbacks, or machine-specific assumptions.
 
 ## 8. Packaging And Repo Hygiene
 
-- [ ] Root cause: package metadata and tracked files drifted from release
+- [x] Root cause: package metadata and tracked files drifted from release
   hygiene rules: GPL is declared without a top-level `LICENSE`, repository URL
   is malformed, and `node_modules/flatted` is tracked despite `.gitignore`.
-- [ ] Smallest correct fix: add a top-level GPL-3.0-only `LICENSE`, fix the
+- [x] Smallest correct fix: add a top-level GPL-3.0-only `LICENSE`, fix the
   repository URL to `git+https://github.com/mobily-enterprises/json-rest-schema.git`,
   and remove tracked `node_modules/**` files from git.
-- [ ] Add release checks for `npm pack --dry-run`, `git ls-files node_modules`,
+- [x] Add release checks for `npm pack --dry-run`, `git ls-files node_modules`,
   and clean status after install.
-- [ ] Why this will not drift: package contents and repository hygiene become
+- [x] Why this will not drift: package contents and repository hygiene become
   mechanically verified.
-- [ ] Alternatives rejected: keeping vendored `flatted` in `node_modules`,
+- [x] Alternatives rejected: keeping vendored `flatted` in `node_modules`,
   because the package manager already makes that dependency reproducible.
-- [ ] Regression checks: tarball includes `LICENSE`; `git ls-files node_modules`
+- [x] Regression checks: tarball includes `LICENSE`; `git ls-files node_modules`
   is empty; `npm ci` does not dirty tracked files.
 
 ## Non-Blocking Follow-Ups
 
-- [ ] Upgrade `flatted` to a non-vulnerable release and confirm
+- [x] Upgrade `flatted` to a non-vulnerable release and confirm
   `npm audit --omit=dev` passes.
-- [ ] Remove the optional `knex` peer/dev dependency unless a supported runtime
+- [x] Remove the optional `knex` peer/dev dependency unless a supported runtime
   adapter uses it.
-- [ ] Decide whether to ship TypeScript declarations for package consumers.
+- [x] Decide whether to ship TypeScript declarations for package consumers:
+  defer them until declarations are generated or type-checked in CI.
 
 ## Verification Checklist
 

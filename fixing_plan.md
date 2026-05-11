@@ -80,17 +80,17 @@ fallbacks, or machine-specific assumptions.
 
 ## 5. Registry Merge Handler Equivalence
 
-- [ ] Root cause: factory merge conflict detection compares
+- [x] Root cause: factory merge conflict detection compares
   `Function.prototype.toString()`, which cannot see closed-over state.
-- [ ] Smallest correct fix: treat handlers as equivalent only when they are the
+- [x] Smallest correct fix: treat handlers as equivalent only when they are the
   same function object.
-- [ ] If cross-package handler equivalence is required later, introduce explicit
+- [x] If cross-package handler equivalence is required later, introduce explicit
   stable handler metadata instead of inferring behavior from source text.
-- [ ] Why this will not drift: equivalence becomes identity-based or declared,
+- [x] Why this will not drift: equivalence becomes identity-based or declared,
   not guessed from formatting/source text.
-- [ ] Alternatives rejected: hashing or comparing source text, because closures
+- [x] Alternatives rejected: hashing or comparing source text, because closures
   can still behave differently with identical source.
-- [ ] Regression tests: duplicate custom type and validator closures with
+- [x] Regression tests: duplicate custom type and validator closures with
   identical source text but different captured state must throw during merge.
 
 ## 6. Plain-Object Checks And Root Input Validation

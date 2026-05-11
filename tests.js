@@ -3266,6 +3266,20 @@ describe('4. Core Plugin: Validator Handlers', () => {
     assert.strictEqual(Object.keys(validErrors).length, 0)
   })
 
+  it('`pattern` should not reuse caller RegExp state across validations', () => {
+    const globalPattern = /a/g
+    const schema = createSchema({
+      value: { type: 'string', pattern: globalPattern }
+    })
+
+    const firstResult = schema.create({ value: 'a' })
+    const secondResult = schema.create({ value: 'a' })
+
+    assert.deepStrictEqual(firstResult.errors, {})
+    assert.deepStrictEqual(secondResult.errors, {})
+    assert.strictEqual(globalPattern.lastIndex, 0)
+  })
+
   it('`uppercase`/`lowercase` should transform strings', () => {
     const schema = createSchema({
       upper: { type: 'string', uppercase: true },
@@ -3290,6 +3304,12 @@ describe('4. Core Plugin: Validator Handlers', () => {
   it('`notEmpty` should fail on empty strings', () => {
     const schema = createSchema({ field: { type: 'string', notEmpty: true } })
     const { errors } = schema.create({ field: '' })
+    assertError(errors, 'field', 'NOT_EMPTY')
+  })
+
+  it('`notEmpty` should fail on strings that are empty after normalization', () => {
+    const schema = createSchema({ field: { type: 'string', notEmpty: true } })
+    const { errors } = schema.create({ field: '   ' })
     assertError(errors, 'field', 'NOT_EMPTY')
   })
 })

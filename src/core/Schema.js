@@ -36,6 +36,10 @@ import {
   resolveObjectFieldMode,
   resolveObjectValuesConfig
 } from './nested-contract.js'
+import {
+  buildPathSegments as buildSafePathSegments,
+  setOwnProperty
+} from '../utils/path-helpers.js'
 
 function isThenable (value) {
   return value !== null &&
@@ -84,23 +88,14 @@ function prefixErrorMap (errors, prefix) {
 
   for (const error of Object.values(errors)) {
     const field = joinPath(prefix, error.field)
-    prefixedErrors[field] = { ...error, field }
+    setOwnProperty(prefixedErrors, field, { ...error, field })
   }
 
   return prefixedErrors
 }
 
 function buildPathSegments (path) {
-  if (typeof path !== 'string' || path.trim() === '') {
-    throw new Error('Validation path must be a non-empty string.')
-  }
-
-  const segments = path.split('.')
-  if (segments.some(segment => segment === '')) {
-    throw new Error(`Validation path "${path}" is invalid.`)
-  }
-
-  return segments
+  return buildSafePathSegments(path, 'validatePath')
 }
 
 function buildSelectionTree (paths) {
@@ -113,8 +108,8 @@ function buildSelectionTree (paths) {
     for (let index = 0; index < segments.length; index++) {
       const segment = segments[index]
 
-      if (!currentTree[segment]) {
-        currentTree[segment] = createSelectionNode()
+      if (!Object.hasOwn(currentTree, segment)) {
+        setOwnProperty(currentTree, segment, createSelectionNode())
       }
 
       if (index === segments.length - 1) {
@@ -206,7 +201,7 @@ function cloneIntrospectionValue (value, seen = new WeakMap()) {
   const cloned = {}
   seen.set(value, cloned)
   for (const [key, entry] of Object.entries(value)) {
-    cloned[key] = cloneIntrospectionValue(entry, seen)
+    setOwnProperty(cloned, key, cloneIntrospectionValue(entry, seen))
   }
   return cloned
 }
@@ -240,8 +235,8 @@ function resolveDefinitionFromSchemaPath (schema, pathSegments, basePath = '') {
   if (!Array.isArray(pathSegments) || pathSegments.length < 1) return null
 
   const [fieldName, ...rest] = pathSegments
+  if (!Object.hasOwn(schema.structure, fieldName)) return null
   const definition = schema.structure[fieldName]
-  if (definition === undefined) return null
 
   if (rest.length < 1) return definition
 
@@ -294,7 +289,7 @@ function buildNestedOptions (options, prefix) {
     for (const [fieldPath, parameters] of Object.entries(options.skipParams)) {
       const nestedFieldPath = stripPathPrefix(fieldPath, prefix)
       if (nestedFieldPath === null || nestedFieldPath === '') continue
-      skipParams[nestedFieldPath] = parameters
+      setOwnProperty(skipParams, nestedFieldPath, parameters)
     }
 
     if (Object.keys(skipParams).length > 0) nestedOptions.skipParams = skipParams
@@ -371,11 +366,11 @@ function normalizeOperations (operations = {}) {
   const normalizedOperations = {}
 
   for (const [operationName, descriptor] of Object.entries(DEFAULT_OPERATIONS)) {
-    normalizedOperations[operationName] = descriptor
+    setOwnProperty(normalizedOperations, operationName, descriptor)
   }
 
   for (const [operationName, descriptor] of Object.entries(operations)) {
-    normalizedOperations[operationName] = normalizeOperationDescriptor(operationName, descriptor)
+    setOwnProperty(normalizedOperations, operationName, normalizeOperationDescriptor(operationName, descriptor))
   }
 
   return Object.freeze(normalizedOperations)
@@ -437,13 +432,15 @@ export class Schema {
   /** @private */
   _mergeErrors (target, source) {
     for (const [fieldPath, error] of Object.entries(source)) {
-      target[fieldPath] = error
+      setOwnProperty(target, fieldPath, error)
     }
   }
 
   /** @private */
   _singleErrorMap (error) {
-    return { [error.field]: error }
+    const errors = {}
+    setOwnProperty(errors, error.field, error)
+    return errors
   }
 
   /** @private */
@@ -506,7 +503,7 @@ export class Schema {
     const validatedObject = {}
 
     for (const fieldName of settings.outputFieldNames) {
-      if (this.structure[fieldName] === undefined) continue
+      if (!Object.hasOwn(this.structure, fieldName)) continue
       const fieldPresent = settings.isFieldPresent(fieldName)
       const includeField = (
         workingObject[fieldName] !== undefined ||
@@ -517,7 +514,7 @@ export class Schema {
       if (!includeField) continue
       if (!fieldPresent && !settings.defaultedFields.has(fieldName)) continue
 
-      validatedObject[fieldName] = workingObject[fieldName]
+      setOwnProperty(validatedObject, fieldName, workingObject[fieldName])
     }
 
     return validatedObject
@@ -558,7 +555,7 @@ export class Schema {
 
     if (rawValue === null) {
       if (nullable) {
-        currentObject[containerKey] = null
+        setOwnProperty(currentObject, containerKey, null)
         return { errors: {}, shouldContinue: false }
       }
 
@@ -574,7 +571,7 @@ export class Schema {
     }
 
     if (String(rawValue) === '' && nullOnEmpty) {
-      currentObject[containerKey] = null
+      setOwnProperty(currentObject, containerKey, null)
       return { errors: {}, shouldContinue: false }
     }
 
@@ -611,7 +608,7 @@ export class Schema {
       }
 
       if (castResult !== undefined) {
-        currentObject[containerKey] = castResult
+        setOwnProperty(currentObject, containerKey, castResult)
         context.value = castResult
       }
     } catch (e) {
@@ -634,7 +631,7 @@ export class Schema {
 
   /** @private */
   _runFieldValidators (definition, fieldPath, currentObject, containerKey, context, options) {
-    for (const paramName in definition) {
+    for (const paramName of Object.keys(definition)) {
       if (paramName === 'type') continue
       if (this._paramToBeSkipped(paramName, options.skipParams, fieldPath)) continue
 
@@ -649,7 +646,7 @@ export class Schema {
           throw new Error(`Validator handler for "${paramName}" must be synchronous.`)
         }
         if (validatorResult !== undefined) {
-          currentObject[containerKey] = validatorResult
+          setOwnProperty(currentObject, containerKey, validatorResult)
           context.value = validatorResult
         }
       } catch (e) {
@@ -729,9 +726,9 @@ export class Schema {
       buildNestedOptions(options, fieldPath)
     )
 
-    currentObject[containerKey] = objectMode.allowAdditionalProperties
+    setOwnProperty(currentObject, containerKey, objectMode.allowAdditionalProperties
       ? this._mergeKnownAndPassthroughObjectFields(sourceObject, objectMode.schema, nestedResult.validatedObject)
-      : nestedResult.validatedObject
+      : nestedResult.validatedObject)
 
     return prefixErrorMap(nestedResult.errors, fieldPath)
   }
@@ -741,8 +738,8 @@ export class Schema {
     const knownObject = {}
 
     for (const [key, value] of Object.entries(sourceObject)) {
-      if (nestedSchema.structure[key] !== undefined) {
-        knownObject[key] = value
+      if (Object.hasOwn(nestedSchema.structure, key)) {
+        setOwnProperty(knownObject, key, value)
       }
     }
 
@@ -754,19 +751,19 @@ export class Schema {
     const mergedObject = {}
 
     for (const key of Object.keys(sourceObject)) {
-      if (nestedSchema.structure[key] === undefined) {
-        mergedObject[key] = sourceObject[key]
+      if (!Object.hasOwn(nestedSchema.structure, key)) {
+        setOwnProperty(mergedObject, key, sourceObject[key])
         continue
       }
 
       if (Object.hasOwn(validatedObject, key)) {
-        mergedObject[key] = validatedObject[key]
+        setOwnProperty(mergedObject, key, validatedObject[key])
       }
     }
 
     for (const [key, value] of Object.entries(validatedObject)) {
       if (!Object.hasOwn(mergedObject, key)) {
-        mergedObject[key] = value
+        setOwnProperty(mergedObject, key, value)
       }
     }
 
@@ -779,7 +776,7 @@ export class Schema {
     const normalizedEntries = { ...originalEntries }
     const errors = {}
 
-    currentObject[containerKey] = normalizedEntries
+    setOwnProperty(currentObject, containerKey, normalizedEntries)
 
     for (const key of Object.keys(originalEntries)) {
       const valuePath = joinPath(fieldPath, key)
@@ -805,7 +802,7 @@ export class Schema {
           buildNestedOptions(options, valuePath)
         )
 
-        normalizedEntries[key] = valueResult.validatedObject
+        setOwnProperty(normalizedEntries, key, valueResult.validatedObject)
         this._mergeErrors(errors, prefixErrorMap(valueResult.errors, valuePath))
         continue
       }
@@ -833,7 +830,7 @@ export class Schema {
     const normalizedItems = originalItems.slice()
     const errors = {}
 
-    currentObject[containerKey] = normalizedItems
+    setOwnProperty(currentObject, containerKey, normalizedItems)
 
     for (let index = 0; index < normalizedItems.length; index++) {
       const itemPath = joinPath(fieldPath, index)
@@ -848,7 +845,7 @@ export class Schema {
           buildNestedOptions(options, itemPath)
         )
 
-        normalizedItems[index] = itemResult.validatedObject
+        setOwnProperty(normalizedItems, index, itemResult.validatedObject)
         this._mergeErrors(errors, prefixErrorMap(itemResult.errors, itemPath))
         continue
       }
@@ -882,8 +879,8 @@ export class Schema {
    * @returns {ValidationError|null} An error object if validation fails, otherwise null.
    */
   _validateField (fieldName, object, validatedObject, options, settings) {
+    if (!Object.hasOwn(this.structure, fieldName)) return {}
     const definition = this.structure[fieldName]
-    if (!definition) return {}
 
     if (this._fieldToBeSkipped(fieldName, options)) return {}
 
@@ -924,9 +921,9 @@ export class Schema {
     const workingObject = { ...object }
     const settings = this._buildOperationSettings(operationName, operation, object)
 
-    for (const fieldName in object) {
-      if (this.structure[fieldName] === undefined) {
-        errors[fieldName] = { field: fieldName, code: 'FIELD_NOT_ALLOWED', message: 'Field not allowed', params: {} }
+    for (const fieldName of Object.keys(object)) {
+      if (!Object.hasOwn(this.structure, fieldName)) {
+        setOwnProperty(errors, fieldName, { field: fieldName, code: 'FIELD_NOT_ALLOWED', message: 'Field not allowed', params: {} })
       }
     }
 
@@ -936,12 +933,12 @@ export class Schema {
     }
 
     if (settings.applyDefaults) {
-      for (const fieldName in this.structure) {
+      for (const fieldName of Object.keys(this.structure)) {
         if (settings.isFieldPresent(fieldName)) continue
 
         if (this.structure[fieldName].defaultTo !== undefined) {
           const def = this.structure[fieldName].defaultTo
-          workingObject[fieldName] = typeof def === 'function' ? def() : def
+          setOwnProperty(workingObject, fieldName, typeof def === 'function' ? def() : def)
           settings.defaultedFields.add(fieldName)
         }
       }
@@ -960,9 +957,7 @@ export class Schema {
 
     for (const fieldName of sortSelectionKeys(Object.keys(selectionTree))) {
       const fieldPath = buildFieldPath(basePath, fieldName)
-      const definition = this.structure[fieldName]
-
-      if (!definition) {
+      if (!Object.hasOwn(this.structure, fieldName)) {
         throw new Error(`Unknown schema path "${fieldPath}".`)
       }
 
@@ -984,6 +979,7 @@ export class Schema {
 
   /** @private */
   _validateSelectedField (fieldName, selectionNode, object, validatedObject, options, settings, fieldPath) {
+    if (!Object.hasOwn(this.structure, fieldName)) return {}
     const definition = this.structure[fieldName]
     const exactSelected = selectionNode.self === true
     const hasChildren = hasSelectionChildren(selectionNode)
@@ -1006,7 +1002,7 @@ export class Schema {
 
       if (exactSelected && settings.applyDefaults && definition.defaultTo !== undefined) {
         const defaultValue = typeof definition.defaultTo === 'function' ? definition.defaultTo() : definition.defaultTo
-        validatedObject[fieldName] = defaultValue
+        setOwnProperty(validatedObject, fieldName, defaultValue)
       }
 
       return errors
@@ -1035,9 +1031,9 @@ export class Schema {
       )
 
       if (Object.hasOwn(currentObject, fieldName) && currentObject[fieldName] !== undefined) {
-        validatedObject[fieldName] = currentObject[fieldName]
+        setOwnProperty(validatedObject, fieldName, currentObject[fieldName])
       } else if (currentObject[fieldName] === null) {
-        validatedObject[fieldName] = null
+        setOwnProperty(validatedObject, fieldName, null)
       }
 
       return fieldErrors
@@ -1063,7 +1059,7 @@ export class Schema {
     )
 
     if (hasSelectedValue(currentObject[fieldName])) {
-      validatedObject[fieldName] = currentObject[fieldName]
+      setOwnProperty(validatedObject, fieldName, currentObject[fieldName])
     }
 
     return nestedResult
@@ -1090,7 +1086,7 @@ export class Schema {
         }
       )
 
-      currentObject[containerKey] = nestedResult.validatedObject
+      setOwnProperty(currentObject, containerKey, nestedResult.validatedObject)
       return prefixErrorMap(nestedResult.errors, fieldPath)
     }
 
@@ -1112,7 +1108,7 @@ export class Schema {
     const sourceItems = currentObject[containerKey]
     const errors = {}
 
-    currentObject[containerKey] = normalizedItems
+    setOwnProperty(currentObject, containerKey, normalizedItems)
 
     for (const indexKey of sortSelectionKeys(Object.keys(selectionTree))) {
       if (!/^[0-9]+$/.test(indexKey)) {
@@ -1131,7 +1127,7 @@ export class Schema {
       const rawValue = sourceItems[index]
       if (rawValue === undefined) {
         if (exactSelected && settings.rejectExplicitUndefined) {
-          errors[itemPath] = this._typeError(itemPath).errorObject
+          setOwnProperty(errors, itemPath, this._typeError(itemPath).errorObject)
         }
         continue
       }
@@ -1146,7 +1142,7 @@ export class Schema {
           )
 
           if (hasSelectedValue(itemResult.validatedObject)) {
-            normalizedItems[index] = itemResult.validatedObject
+            setOwnProperty(normalizedItems, index, itemResult.validatedObject)
           }
 
           this._mergeErrors(errors, prefixErrorMap(itemResult.errors, itemPath))
@@ -1168,7 +1164,7 @@ export class Schema {
         )
 
         if (hasSelectedValue(itemResult.validatedObject)) {
-          normalizedItems[index] = itemResult.validatedObject
+          setOwnProperty(normalizedItems, index, itemResult.validatedObject)
         }
 
         this._mergeErrors(errors, prefixErrorMap(itemResult.errors, itemPath))
@@ -1191,9 +1187,9 @@ export class Schema {
         )
 
         if (Object.hasOwn(itemHolder, 0) && itemHolder[0] !== undefined) {
-          normalizedItems[index] = itemHolder[0]
+          setOwnProperty(normalizedItems, index, itemHolder[0])
         } else if (itemHolder[0] === null) {
-          normalizedItems[index] = null
+          setOwnProperty(normalizedItems, index, null)
         }
 
         this._mergeErrors(errors, itemErrors)
@@ -1221,7 +1217,7 @@ export class Schema {
       )
 
       if (hasSelectedValue(itemHolder[0])) {
-        normalizedItems[index] = itemHolder[0]
+        setOwnProperty(normalizedItems, index, itemHolder[0])
       }
 
       this._mergeErrors(errors, itemErrors)
@@ -1367,9 +1363,9 @@ export class Schema {
    */
   cleanup (object, parameterName) {
     const newObject = {}
-    for (const k in object) {
-      if (this.structure[k] && this.structure[k][parameterName]) {
-        newObject[k] = object[k]
+    for (const k of Object.keys(object)) {
+      if (Object.hasOwn(this.structure, k) && this.structure[k][parameterName]) {
+        setOwnProperty(newObject, k, object[k])
       }
     }
     return newObject

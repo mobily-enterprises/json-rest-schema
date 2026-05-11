@@ -837,6 +837,15 @@ export class Schema {
 
       if (this._fieldToBeSkipped(itemPath, options)) continue
 
+      if (!Object.hasOwn(originalItems, index) || normalizedItems[index] === undefined) {
+        if (settings.rejectExplicitUndefined) {
+          this._mergeErrors(errors, this._singleErrorMap(this._typeError(itemPath).errorObject))
+        } else {
+          delete normalizedItems[index]
+        }
+        continue
+      }
+
       if (itemsConfig.kind === 'schema') {
         const itemResult = itemsConfig.schema._validateWithOperation(
           'replace',
@@ -1122,7 +1131,12 @@ export class Schema {
       const hasChildren = hasSelectionChildren(selectionNode)
 
       if (this._fieldToBeSkipped(itemPath, options)) continue
-      if (!Object.hasOwn(sourceItems, index)) continue
+      if (!Object.hasOwn(sourceItems, index)) {
+        if (exactSelected && settings.rejectExplicitUndefined) {
+          setOwnProperty(errors, itemPath, this._typeError(itemPath).errorObject)
+        }
+        continue
+      }
 
       const rawValue = sourceItems[index]
       if (rawValue === undefined) {

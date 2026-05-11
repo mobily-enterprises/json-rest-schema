@@ -2019,6 +2019,22 @@ describe('2.35. React Hook Form Resolver', () => {
 })
 
 describe('2.36. Vue + Vuetify Adapters', () => {
+  class AccessorBox {
+    #value
+
+    constructor (value) {
+      this.#value = value
+    }
+
+    get value () {
+      return this.#value
+    }
+
+    set value (value) {
+      this.#value = value
+    }
+  }
+
   it('useSchemaForm should validate full forms and expose the normalized result', () => {
     const schema = createSchema({
       name: { type: 'string', required: true },
@@ -2042,6 +2058,28 @@ describe('2.36. Vue + Vuetify Adapters', () => {
     })
     assert.deepStrictEqual(form.errors, {})
     assert.deepStrictEqual(form.lastResult, result)
+  })
+
+  it('useSchemaForm should write to accessor-based ref-like containers', () => {
+    const schema = createSchema({
+      name: { type: 'string', required: true, minLength: 3 }
+    })
+    const errors = new AccessorBox({})
+    const lastResult = new AccessorBox(null)
+    const form = useSchemaForm(schema, {
+      values: {
+        name: 'x'
+      },
+      errors,
+      lastResult
+    })
+
+    const result = form.validateField('name')
+
+    assertError(errors.value, 'name', 'MIN_LENGTH')
+    assert.deepStrictEqual(lastResult.value, result)
+    assert.strictEqual(form.errors, errors.value)
+    assert.strictEqual(form.lastResult, lastResult.value)
   })
 
   it('useSchemaForm should validate only the selected field path without leaking sibling required rules', () => {

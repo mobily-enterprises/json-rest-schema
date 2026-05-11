@@ -1,5 +1,5 @@
 <script setup>
-import { computed, reactive, ref } from 'vue'
+import { computed, nextTick, reactive, ref } from 'vue'
 import { useSchemaField, useSchemaForm } from 'json-rest-schema/vue'
 import {
   createVuetifyRule,
@@ -35,6 +35,10 @@ const slugMessage = computed(() => getVuetifyErrorMessages(flatErrors.value, 'wo
 const ownerMessage = computed(() => getVuetifyErrorMessages(flatErrors.value, 'workspace.ownerUserId')[0] ?? '')
 const roleMessage = computed(() => getVuetifyErrorMessages(flatErrors.value, 'roles.0.label')[0] ?? '')
 
+function validateAfterModelUpdate (field) {
+  nextTick(() => field.validate())
+}
+
 function handleSubmit () {
   const result = form.validate()
   submittedPayload.value = Object.keys(result.errors).length === 0
@@ -64,7 +68,7 @@ function handleSubmit () {
                 label="Workspace slug"
                 placeholder="team-alpha"
                 :rules="[slugRule]"
-                @blur="slugField.validate()"
+                @update:model-value="() => validateAfterModelUpdate(slugField)"
               />
               <p class="helper-error" data-testid="vue-error-workspace-slug">{{ slugMessage }}</p>
 
@@ -74,7 +78,7 @@ function handleSubmit () {
                 label="Owner user ID"
                 placeholder="42"
                 :rules="[ownerRule]"
-                @blur="ownerField.validate()"
+                @update:model-value="() => validateAfterModelUpdate(ownerField)"
               />
               <p class="helper-error" data-testid="vue-error-owner-user-id">{{ ownerMessage }}</p>
 
@@ -84,7 +88,7 @@ function handleSubmit () {
                 label="First role label"
                 placeholder="Admin"
                 :rules="[roleRule]"
-                @blur="roleField.validate()"
+                @update:model-value="() => validateAfterModelUpdate(roleField)"
               />
               <p class="helper-error" data-testid="vue-error-role-label-0">{{ roleMessage }}</p>
 

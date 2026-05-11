@@ -388,6 +388,30 @@ describe('1. Core API (`createSchema`)', () => {
     }, /Cannot merge schema factories with conflicting validator "closure-expected-value"/)
   })
 
+  it('should keep registry and operation lookups limited to own properties', () => {
+    const schema = createSchema({
+      name: { type: 'string', toString: true }
+    })
+    const result = schema.create({ name: 'Ada' })
+
+    assert.deepStrictEqual(result.errors, {})
+    assert.deepStrictEqual(result.validatedObject, { name: 'Ada' })
+    assert.doesNotThrow(() => schema.toJsonSchema())
+
+    assert.throws(
+      () => createSchema({ value: { type: 'toString' } }).create({ value: 'abc' }),
+      /No casting function for type: toString/
+    )
+    assert.throws(
+      () => createSchema({ name: { type: 'string' } }).validateWith('toString', { name: 'Ada' }),
+      /Unknown operation "toString"\./
+    )
+    assert.throws(
+      () => createSchema({ name: { type: 'string' } }).toJsonSchema({ operation: 'toString' }),
+      /Unknown JSON Schema export operation 'toString'\./
+    )
+  })
+
   it('should merge schema registries across separate installed copies of the library', async () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'json-rest-schema-copy-'))
     try {

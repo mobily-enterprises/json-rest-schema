@@ -6,6 +6,7 @@
 import { Schema } from './core/Schema.js'
 import CorePlugin from './core/CorePlugin.js'
 import { flattenErrors, getError, hasError, nestErrors } from './utils/error-helpers.js'
+import { setOwnProperty } from './utils/path-helpers.js'
 
 const factoryTypesBySource = new WeakMap()
 const factoryValidatorsBySource = new WeakMap()
@@ -15,14 +16,24 @@ function registerTypeHandler (types, name, handler) {
   if (typeof handler !== 'function') {
     throw new Error(`Type handler for '${name}' must be a function.`)
   }
-  types[name] = handler
+  setOwnProperty(types, name, handler)
 }
 
 function registerValidatorHandler (validators, name, handler) {
   if (typeof handler !== 'function') {
     throw new Error(`Validator handler for '${name}' must be a function.`)
   }
-  validators[name] = handler
+  setOwnProperty(validators, name, handler)
+}
+
+function createHandlerRegistry (source = {}) {
+  const registry = Object.create(null)
+
+  for (const [name, handler] of Object.entries(source)) {
+    setOwnProperty(registry, name, handler)
+  }
+
+  return registry
 }
 
 function installPlugin (plugin, api) {
@@ -107,7 +118,7 @@ function mergeRegistryHandlers (target, source, kind) {
     if (Object.hasOwn(target, name) && !areEquivalentHandlers(target[name], handler)) {
       throw new Error(`Cannot merge schema factories with conflicting ${kind} "${name}".`)
     }
-    target[name] = handler
+    setOwnProperty(target, name, handler)
   }
 }
 
@@ -115,13 +126,13 @@ function resolveMergedRegistries (fallbackTypes, fallbackValidators, sources) {
   const normalizedSources = normalizeFactorySources(sources).filter(Boolean)
   if (normalizedSources.length < 1) {
     return {
-      types: { ...fallbackTypes },
-      validators: { ...fallbackValidators }
+      types: createHandlerRegistry(fallbackTypes),
+      validators: createHandlerRegistry(fallbackValidators)
     }
   }
 
-  const mergedTypes = {}
-  const mergedValidators = {}
+  const mergedTypes = Object.create(null)
+  const mergedValidators = Object.create(null)
   for (const source of normalizedSources) {
     const metadata = extractRegistryMetadata(source)
     if (!metadata) {
@@ -143,8 +154,8 @@ function createSchemaFactory ({
   validators = {},
   installCore = true
 } = {}) {
-  const factoryTypes = { ...types }
-  const factoryValidators = { ...validators }
+  const factoryTypes = createHandlerRegistry(types)
+  const factoryValidators = createHandlerRegistry(validators)
 
   const factory = (structure, options = {}) => {
     const schema = new Schema(

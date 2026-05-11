@@ -360,7 +360,7 @@ function normalizeOperations (operations = {}) {
     throw new Error('Schema operations must be an object.')
   }
 
-  const normalizedOperations = {}
+  const normalizedOperations = Object.create(null)
 
   for (const [operationName, descriptor] of Object.entries(DEFAULT_OPERATIONS)) {
     setOwnProperty(normalizedOperations, operationName, descriptor)
@@ -371,6 +371,16 @@ function normalizeOperations (operations = {}) {
   }
 
   return Object.freeze(normalizedOperations)
+}
+
+function freezeOwnMap (source) {
+  const map = Object.create(null)
+
+  for (const [key, value] of Object.entries(source)) {
+    setOwnProperty(map, key, value)
+  }
+
+  return Object.freeze(map)
 }
 
 function cloneValidationOptions (options) {
@@ -393,8 +403,8 @@ export class Schema {
    */
   constructor (structure, types, validators, operations = {}) {
     this.structure = structure
-    this.types = Object.freeze({ ...types })
-    this.validators = Object.freeze({ ...validators })
+    this.types = freezeOwnMap(types)
+    this.validators = freezeOwnMap(validators)
     this.operations = normalizeOperations(operations)
 
     this._installOperationMethods()
@@ -483,10 +493,10 @@ export class Schema {
       throw new Error('Path validation options `operation` and `mode` must match when both are provided.')
     }
 
-    const operation = this.operations[operationName]
-    if (!operation) {
+    if (!Object.hasOwn(this.operations, operationName)) {
       throw new Error(`Unknown operation "${operationName}".`)
     }
+    const operation = this.operations[operationName]
 
     return {
       operationName,
@@ -595,8 +605,10 @@ export class Schema {
       }
     }
 
+    if (!Object.hasOwn(this.types, definition.type)) {
+      throw new Error(`No casting function for type: ${definition.type}`)
+    }
     const typeHandler = this.types[definition.type]
-    if (!typeHandler) throw new Error(`No casting function for type: ${definition.type}`)
 
     try {
       const castResult = typeHandler(context)
@@ -632,8 +644,8 @@ export class Schema {
       if (paramName === 'type') continue
       if (this._paramToBeSkipped(paramName, options.skipParams, fieldPath)) continue
 
+      if (!Object.hasOwn(this.validators, paramName)) continue
       const validatorHandler = this.validators[paramName]
-      if (!validatorHandler) continue
 
       try {
         context.parameterName = paramName
@@ -1247,10 +1259,10 @@ export class Schema {
    * @returns {{validatedObject: object, errors: Object.<string, ValidationError>}}
    */
   validateWith (operationName, object, options = {}) {
-    const operation = this.operations[operationName]
-    if (!operation) {
+    if (!Object.hasOwn(this.operations, operationName)) {
       throw new Error(`Unknown operation "${operationName}".`)
     }
+    const operation = this.operations[operationName]
 
     this._assertPlainObjectInput(operationName, object)
 

@@ -150,10 +150,10 @@ function buildAnyOfSchema (baseSchema, alternatives) {
 }
 
 function getTypeExporter (schema, definition) {
-  const handler = schema.types[definition.type]
-  if (!handler) {
+  if (!Object.hasOwn(schema.types, definition.type)) {
     throw new Error(`No casting function for type: ${definition.type}`)
   }
+  const handler = schema.types[definition.type]
 
   if (typeof handler.toJsonSchema === 'function') {
     return handler.toJsonSchema
@@ -168,8 +168,8 @@ function getTypeExporter (schema, definition) {
 }
 
 function getValidatorExporter (schema, parameterName, fieldName) {
+  if (!Object.hasOwn(schema.validators, parameterName)) return null
   const handler = schema.validators[parameterName]
-  if (!handler) return null
 
   if (typeof handler.toJsonSchema === 'function') {
     return handler.toJsonSchema
@@ -198,7 +198,7 @@ function resolveOperationName (schema, options = {}) {
   }
 
   if (options.operation !== undefined) {
-    if (!schema.operations[options.operation]) {
+    if (!Object.hasOwn(schema.operations, options.operation)) {
       throw new Error(`Unknown JSON Schema export operation '${options.operation}'.`)
     }
     return options.operation
@@ -541,7 +541,7 @@ function buildFieldSchema (schema, fieldName, definition, options, operationName
 
   for (const parameterName of Object.keys(definition)) {
     if (parameterName === 'type') continue
-    if (!(parameterName in schema.validators)) continue
+    if (!Object.hasOwn(schema.validators, parameterName)) continue
 
     const exporter = getValidatorExporter(schema, parameterName, fieldName)
     if (!exporter) continue

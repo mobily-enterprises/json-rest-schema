@@ -19,7 +19,7 @@ test('Vue + Vuetify demo validates and submits normalized values', async ({ page
 
   await page.getByLabel('Workspace slug').fill('ab')
   await page.getByLabel('Owner user ID').click()
-  await expect(page.getByText('Length must be at least 3 characters.')).toBeVisible()
+  await expect(page.getByTestId('vue-error-workspace-slug')).toHaveText('Length must be at least 3 characters.')
 
   await page.getByLabel('Workspace slug').fill('  launch-team  ')
   await page.getByLabel('Owner user ID').fill(' 7 ')

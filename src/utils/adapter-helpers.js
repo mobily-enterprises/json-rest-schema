@@ -15,8 +15,26 @@ export {
 
 export { isPlainObject } from './object-helpers.js'
 
+function hasValueAccessor (value) {
+  let prototype = Object.getPrototypeOf(value)
+
+  while (prototype !== null && prototype !== Object.prototype) {
+    const descriptor = Object.getOwnPropertyDescriptor(prototype, 'value')
+    if (descriptor) {
+      return typeof descriptor.get === 'function' && typeof descriptor.set === 'function'
+    }
+
+    prototype = Object.getPrototypeOf(prototype)
+  }
+
+  return false
+}
+
 export function isRefLike (value) {
-  return value !== null && typeof value === 'object' && Object.hasOwn(value, 'value')
+  return value !== null &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    (Object.hasOwn(value, 'value') || hasValueAccessor(value))
 }
 
 export function cloneValue (value) {

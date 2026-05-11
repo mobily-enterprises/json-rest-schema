@@ -1551,6 +1551,22 @@ describe('2.25. Error Helper Utilities', () => {
     })
   })
 
+  it('nestErrors should handle inherited object names as own safe path segments', () => {
+    const error = {
+      field: 'toString.child',
+      code: 'CUSTOM',
+      message: 'Custom error',
+      params: {}
+    }
+    const nestedErrors = nestErrors({
+      'toString.child': error
+    })
+
+    assert.strictEqual(Object.hasOwn(nestedErrors, 'toString'), true)
+    assert.deepStrictEqual(nestedErrors.toString.child, error)
+    assert.strictEqual(Object.getPrototypeOf(nestedErrors), Object.prototype)
+  })
+
   it('helpers should reject invalid dotted paths clearly', () => {
     assert.throws(
       () => getError(sampleErrors, ''),

@@ -87,12 +87,13 @@ export function nestErrors (errors) {
         continue
       }
 
-      const existingNode = currentNode[segment]
-      if (existingNode !== undefined && (!isObjectLike(existingNode) || isValidationErrorObject(existingNode))) {
+      const hasExistingNode = Object.hasOwn(currentNode, segment)
+      const existingNode = hasExistingNode ? currentNode[segment] : undefined
+      if (hasExistingNode && (!isObjectLike(existingNode) || isValidationErrorObject(existingNode))) {
         throw new Error(`nestErrors() cannot nest conflicting path "${path}".`)
       }
 
-      if (existingNode === undefined) {
+      if (!hasExistingNode) {
         const nextSegment = segments[index + 1]
         setOwnProperty(currentNode, segment, isNumericSegment(nextSegment) ? [] : {})
       }

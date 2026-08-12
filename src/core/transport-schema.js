@@ -4,6 +4,14 @@ import {
   resolveObjectValuesConfig
 } from './nested-contract.js'
 import { isNumericDefinition } from './definition-helpers.js'
+import {
+  DATE_JSON_SCHEMA_PATTERN,
+  dateTimeJsonSchemaPattern,
+  EPOCH_INTEGER_STRING_PATTERN,
+  EPOCH_MILLISECONDS_LIMIT,
+  EPOCH_SECONDS_LIMIT,
+  timeJsonSchemaPattern
+} from './temporal.js'
 import { isPlainObject } from '../utils/object-helpers.js'
 import { setOwnProperty } from '../utils/path-helpers.js'
 
@@ -14,6 +22,15 @@ const EXPORT_CONTEXT_KEY = Symbol('json-rest-schema.exportContext')
 
 const BOOLEAN_TRUE_VALUES = ['true', '1', 'yes', 'y', 'on']
 const BOOLEAN_FALSE_VALUES = ['false', '0', 'no', 'n', 'off']
+
+function epochIntegerSchema (limit) {
+  return {
+    anyOf: [
+      { type: 'integer', minimum: -limit, maximum: limit },
+      { type: 'string', pattern: EPOCH_INTEGER_STRING_PATTERN }
+    ]
+  }
+}
 
 function extensionMetadataFragment (section, values) {
   return {
@@ -33,10 +50,22 @@ const BUILTIN_TYPE_EXPORTERS = {
   string: () => ({ type: 'string' }),
   number: () => ({ type: ['number', 'string'] }),
   integer: () => ({ type: ['integer', 'string'] }),
-  timestamp: () => ({ type: ['number', 'string'] }),
-  dateTime: () => ({ type: 'string' }),
-  date: () => ({ type: 'string' }),
-  time: () => ({ type: 'string' }),
+  epochMilliseconds: () => epochIntegerSchema(EPOCH_MILLISECONDS_LIMIT),
+  epochSeconds: () => epochIntegerSchema(EPOCH_SECONDS_LIMIT),
+  dateTime: ({ definition, fieldName }) => ({
+    type: 'string',
+    format: 'date-time',
+    pattern: dateTimeJsonSchemaPattern(definition, fieldName)
+  }),
+  date: () => ({
+    type: 'string',
+    format: 'date',
+    pattern: DATE_JSON_SCHEMA_PATTERN
+  }),
+  time: ({ definition, fieldName }) => ({
+    type: 'string',
+    pattern: timeJsonSchemaPattern(definition, fieldName)
+  }),
   boolean: ({ definition }) => {
     if (definition.strictBoolean === true) {
       return { type: 'boolean' }
@@ -574,7 +603,25 @@ function buildFieldSchema (schema, fieldName, definition, options, operationName
 
   if (definition.defaultTo !== undefined && operation.applyDefaults) {
     if (typeof definition.defaultTo !== 'function') {
-      finalSchema.default = definition.defaultTo
+      const defaultResult = schema._normalizeDefault(
+        definition,
+        definition.defaultTo,
+        {
+          fieldPath: fieldName,
+          currentObject: {},
+          containerKey: fieldName,
+          objectBeforeCast: {},
+          options: {},
+          settings: schema._buildOperationSettings(operationName, operation, {})
+        }
+      )
+
+      if (Object.keys(defaultResult.errors).length > 0) {
+        const firstError = Object.values(defaultResult.errors)[0]
+        throw new Error(`defaultTo for "${fieldName}" is invalid (${firstError.code}).`)
+      }
+
+      finalSchema.default = defaultResult.value
     } else {
       extensionMetadata.defaults = { providedByFunction: true }
     }

@@ -560,6 +560,11 @@ export class Schema {
     const nullable = definition.nullable === true || options.nullable === true
     const nullOnEmpty = definition.nullOnEmpty === true || options.nullOnEmpty === true
 
+    if (!Object.hasOwn(this.types, definition.type)) {
+      throw new Error(`No casting function for type: ${definition.type}`)
+    }
+    const typeHandler = this.types[definition.type]
+
     if (rawValue === null) {
       if (nullable) {
         setOwnProperty(currentObject, containerKey, null)
@@ -604,11 +609,6 @@ export class Schema {
         throw this._paramError(fieldPath, code, message, params)
       }
     }
-
-    if (!Object.hasOwn(this.types, definition.type)) {
-      throw new Error(`No casting function for type: ${definition.type}`)
-    }
-    const typeHandler = this.types[definition.type]
 
     try {
       const castResult = typeHandler(context)
@@ -682,6 +682,31 @@ export class Schema {
 
     context.value = currentObject[containerKey]
     return this._runFieldValidators(definition, fieldPath, currentObject, containerKey, context, options)
+  }
+
+  /** @private */
+  _normalizeDefault (definition, defaultValue, {
+    fieldPath,
+    currentObject,
+    containerKey,
+    objectBeforeCast,
+    options,
+    settings
+  }) {
+    const defaultObject = { ...currentObject }
+    setOwnProperty(defaultObject, containerKey, defaultValue)
+    const errors = this._normalizeAndValidateValue(
+      definition,
+      defaultValue,
+      fieldPath,
+      defaultObject,
+      containerKey,
+      objectBeforeCast,
+      options,
+      settings
+    )
+
+    return { errors, value: defaultObject[containerKey] }
   }
 
   /** @private */
@@ -955,8 +980,25 @@ export class Schema {
         if (settings.isFieldPresent(fieldName)) continue
 
         if (this.structure[fieldName].defaultTo !== undefined) {
-          const def = this.structure[fieldName].defaultTo
-          setOwnProperty(workingObject, fieldName, typeof def === 'function' ? def() : def)
+          const definition = this.structure[fieldName]
+          const defaultValue = typeof definition.defaultTo === 'function' ? definition.defaultTo() : definition.defaultTo
+          const defaultResult = this._normalizeDefault(
+            definition,
+            defaultValue,
+            {
+              fieldPath: fieldName,
+              currentObject: workingObject,
+              containerKey: fieldName,
+              objectBeforeCast: object,
+              options,
+              settings
+            }
+          )
+
+          this._mergeErrors(errors, defaultResult.errors)
+          if (Object.keys(defaultResult.errors).length > 0) continue
+
+          setOwnProperty(workingObject, fieldName, defaultResult.value)
           settings.defaultedFields.add(fieldName)
         }
       }
@@ -1020,7 +1062,22 @@ export class Schema {
 
       if (exactSelected && settings.applyDefaults && definition.defaultTo !== undefined) {
         const defaultValue = typeof definition.defaultTo === 'function' ? definition.defaultTo() : definition.defaultTo
-        setOwnProperty(validatedObject, fieldName, defaultValue)
+        const defaultResult = this._normalizeDefault(
+          definition,
+          defaultValue,
+          {
+            fieldPath,
+            currentObject: validatedObject,
+            containerKey: fieldName,
+            objectBeforeCast: object,
+            options,
+            settings
+          }
+        )
+        this._mergeErrors(errors, defaultResult.errors)
+        if (Object.keys(defaultResult.errors).length === 0) {
+          setOwnProperty(validatedObject, fieldName, defaultResult.value)
+        }
       }
 
       return errors

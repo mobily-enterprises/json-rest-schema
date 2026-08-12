@@ -9,6 +9,7 @@
 
 import { describe, it } from 'node:test'
 import assert from 'node:assert'
+import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -626,6 +627,35 @@ describe('2. Core Validation Logic (`Schema.js`)', () => {
     assert.strictEqual(validObj.role, 'user')
   })
 
+  it('should run defaultTo values through the same type and validator pipeline', () => {
+    const schema = createSchema({
+      name: { type: 'string', defaultTo: '  Guest  ' },
+      publishedOn: { type: 'date', defaultTo: () => '2024-02-29' }
+    })
+
+    assert.deepStrictEqual(schema.create({}), {
+      validatedObject: {
+        name: 'Guest',
+        publishedOn: '2024-02-29'
+      },
+      errors: {}
+    })
+
+    const invalidSchema = createSchema({
+      publishedOn: { type: 'date', defaultTo: () => '2023-02-29' },
+      code: { type: 'string', minLength: 2, defaultTo: 'x' }
+    })
+    const invalidResult = invalidSchema.create({})
+
+    assert.deepStrictEqual(invalidResult.validatedObject, {})
+    assertError(invalidResult.errors, 'publishedOn', 'TYPE_CAST_FAILED')
+    assertError(invalidResult.errors, 'code', 'MIN_LENGTH')
+
+    const selectedResult = invalidSchema.validateAt('code', {}, { operation: 'create' })
+    assert.strictEqual(selectedResult.validatedValue, undefined)
+    assertError(selectedResult.errors, 'code', 'MIN_LENGTH')
+  })
+
   describe('Validation Options', () => {
     const schema = createSchema({
       name: { type: 'string', required: true, minLength: 3 },
@@ -702,7 +732,7 @@ describe('2. Core Validation Logic (`Schema.js`)', () => {
       assertError(errors, 'name', 'TYPE_CAST_FAILED')
     })
 
-    it('operation methods should reject non-plain root inputs and accept null-prototype objects', () => {
+    it('operation methods should reject non-plain root inputs and accept plain record objects', () => {
       const customSchema = createSchema({
         name: { type: 'string' }
       }, {
@@ -717,6 +747,8 @@ describe('2. Core Validation Logic (`Schema.js`)', () => {
       })
       const nullPrototypeInput = Object.create(null)
       nullPrototypeInput.name = '  Alex  '
+      const fastifyAjvInput = Object.create(Object.create(null))
+      fastifyAjvInput.name = '  Alex  '
 
       assert.throws(
         () => schema.create([]),
@@ -742,6 +774,12 @@ describe('2. Core Validation Logic (`Schema.js`)', () => {
       const { validatedObject, errors } = schema.patch(nullPrototypeInput)
       assert.deepStrictEqual(errors, {})
       assert.deepStrictEqual(validatedObject, {
+        name: 'Alex'
+      })
+
+      const fastifyAjvResult = schema.patch(fastifyAjvInput)
+      assert.deepStrictEqual(fastifyAjvResult.errors, {})
+      assert.deepStrictEqual(fastifyAjvResult.validatedObject, {
         name: 'Alex'
       })
     })
@@ -1247,6 +1285,22 @@ describe('2. Core Validation Logic (`Schema.js`)', () => {
         validatedValue: 'guest',
         errors: {}
       })
+    })
+
+    it('validateAt should validate and normalize exact selected defaults', () => {
+      const schema = createSchema({
+        name: { type: 'string', defaultTo: '  Guest  ' },
+        publishedOn: { type: 'date', defaultTo: '2023-02-29' }
+      })
+
+      assert.deepStrictEqual(schema.validateAt('name', {}, { operation: 'create' }), {
+        validatedValue: 'Guest',
+        errors: {}
+      })
+
+      const invalidResult = schema.validateAt('publishedOn', {}, { operation: 'create' })
+      assert.strictEqual(invalidResult.validatedValue, undefined)
+      assertError(invalidResult.errors, 'publishedOn', 'TYPE_CAST_FAILED')
     })
 
     it('validateAt should validate only the selected nested path without leaking sibling required rules', () => {
@@ -3035,6 +3089,18 @@ describe('2.5. Transport JSON Schema Export', () => {
 
     const transportSchema = schema.toJsonSchema()
 
+    assert.deepStrictEqual(transportSchema.properties.recordedAt, {
+      type: 'string',
+      format: 'date-time',
+      pattern: '^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d{1,3})?(?:Z|[+-](?:[01]\\d|2[0-3]):[0-5]\\d)$',
+      'x-json-rest-schema': {
+        castType: 'dateTime',
+        metadata: {
+          temporalPrecision: 3
+        }
+      }
+    })
+
     assert.deepStrictEqual(transportSchema.properties.recordedAt['x-json-rest-schema'], {
       castType: 'dateTime',
       metadata: {
@@ -3050,6 +3116,70 @@ describe('2.5. Transport JSON Schema Export', () => {
         scale: 4
       }
     })
+  })
+
+  it('should export strict JSON-native temporal and explicit epoch contracts', () => {
+    const schema = createSchema({
+      publishedOn: { type: 'date' },
+      opensAt: { type: 'time', temporalPrecision: 0 },
+      recordedAt: { type: 'dateTime' },
+      epochMs: { type: 'epochMilliseconds' },
+      epochS: { type: 'epochSeconds' }
+    })
+
+    const properties = schema.toJsonSchema().properties
+
+    assert.deepStrictEqual(properties.publishedOn, {
+      type: 'string',
+      format: 'date',
+      pattern: '^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])$',
+      'x-json-rest-schema': { castType: 'date' }
+    })
+    assert.deepStrictEqual(properties.opensAt, {
+      type: 'string',
+      pattern: '^(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d)?$',
+      'x-json-rest-schema': {
+        castType: 'time',
+        metadata: { temporalPrecision: 0 }
+      }
+    })
+    assert.strictEqual(properties.recordedAt.type, 'string')
+    assert.strictEqual(properties.recordedAt.format, 'date-time')
+    assert.deepStrictEqual(properties.epochMs, {
+      anyOf: [
+        { type: 'integer', minimum: -8640000000000000, maximum: 8640000000000000 },
+        { type: 'string', pattern: '^(?:0|-?[1-9]\\d*)$' }
+      ],
+      'x-json-rest-schema': { castType: 'epochMilliseconds' }
+    })
+    assert.deepStrictEqual(properties.epochS, {
+      anyOf: [
+        { type: 'integer', minimum: -8640000000000, maximum: 8640000000000 },
+        { type: 'string', pattern: '^(?:0|-?[1-9]\\d*)$' }
+      ],
+      'x-json-rest-schema': { castType: 'epochSeconds' }
+    })
+
+    const epochMillisecondsStringPattern = new RegExp(properties.epochMs.anyOf[1].pattern)
+    assert.strictEqual(epochMillisecondsStringPattern.test('8640000000000000'), true)
+    assert.strictEqual(epochMillisecondsStringPattern.test('-8640000000000000'), true)
+    assert.strictEqual(epochMillisecondsStringPattern.test('01'), false)
+    assert.strictEqual(epochMillisecondsStringPattern.test('-0'), false)
+  })
+
+  it('should validate literal defaults before exporting them', () => {
+    const validSchema = createSchema({
+      publishedOn: { type: 'date', defaultTo: '2024-02-29' }
+    })
+    assert.strictEqual(validSchema.toJsonSchema().properties.publishedOn.default, '2024-02-29')
+
+    const invalidSchema = createSchema({
+      publishedOn: { type: 'date', defaultTo: '2023-02-29' }
+    })
+    assert.throws(
+      () => invalidSchema.toJsonSchema(),
+      /defaultTo for "publishedOn" is invalid \(TYPE_CAST_FAILED\)\./
+    )
   })
 
   it('should ignore non-schema metadata keys that belong to other layers', () => {
@@ -3120,6 +3250,8 @@ describe('2.5. Transport JSON Schema Export', () => {
 describe('3. Core Plugin: Type Handlers', () => {
   const nullPrototypeObject = Object.create(null)
   nullPrototypeObject.nested = true
+  const fastifyAjvObject = Object.create(Object.create(null))
+  fastifyAjvObject.nested = true
 
   const testCases = [
     // None
@@ -3143,20 +3275,6 @@ describe('3. Core Plugin: Type Handlers', () => {
     { type: 'number', input: { field: null }, error: 'NOT_NULLABLE' },
     { type: 'number', input: { field: 'abc' }, error: 'TYPE_CAST_FAILED' },
 
-    // Timestamp
-    { type: 'timestamp', input: { field: 1672531200000 }, expected: 1672531200000 },
-    { type: 'timestamp', input: { field: null }, options: { nullable: true }, expected: null },
-    { type: 'timestamp', input: { field: '0' }, options: { nullable: true }, expected: 0 },
-    { type: 'timestamp', input: { field: '' }, error: 'TYPE_CAST_FAILED' },
-    { type: 'timestamp', input: { field: 'abc' }, error: 'TYPE_CAST_FAILED' },
-
-    // DateTime & Date
-    { type: 'dateTime', input: { field: '2025-01-01T12:30:00Z' }, expected: new Date('2025-01-01T12:30:00Z') },
-    { type: 'dateTime', input: { field: 'invalid' }, error: 'TYPE_CAST_FAILED' },
-    { type: 'dateTime', input: { field: 0 }, expected: new Date(0) },
-    { type: 'date', input: { field: '2025-01-01T12:30:00Z' }, expected: new Date('2025-01-01T00:00:00Z') },
-    { type: 'date', input: { field: '2025-01-01' }, expected: new Date('2025-01-01T00:00:00Z') },
-
     // Array
     { type: 'array', input: { field: 'one' }, expected: ['one'] },
     { type: 'array', input: { field: ['one', 'two'] }, expected: ['one', 'two'] },
@@ -3164,6 +3282,7 @@ describe('3. Core Plugin: Type Handlers', () => {
     // Object
     { type: 'object', input: { field: { nested: true } }, expected: { nested: true } },
     { type: 'object', input: { field: nullPrototypeObject }, expected: nullPrototypeObject },
+    { type: 'object', input: { field: fastifyAjvObject }, expected: fastifyAjvObject },
     { type: 'object', input: { field: 'not-an-object' }, error: 'TYPE_CAST_FAILED' },
     { type: 'object', input: { field: ['nope'] }, error: 'TYPE_CAST_FAILED' },
     { type: 'object', input: { field: new Date('2025-01-01T00:00:00Z') }, error: 'TYPE_CAST_FAILED' },
@@ -3205,6 +3324,241 @@ describe('3. Core Plugin: Type Handlers', () => {
         assert.deepStrictEqual(validatedObject.field, expected)
       }
     })
+  })
+
+  describe('JSON-native temporal contracts', () => {
+    const validateTemporal = (type, value, options = {}) => {
+      const schema = createSchema({ field: { type, ...options } })
+      return schema.create({ field: value })
+    }
+
+    it('should normalize valid epoch values with explicit units', () => {
+      const cases = [
+        ['epochMilliseconds', 1672531200000, 1672531200000],
+        ['epochMilliseconds', '-1', -1],
+        ['epochMilliseconds', '0', 0],
+        ['epochMilliseconds', '8640000000000000', 8640000000000000],
+        ['epochMilliseconds', '-8640000000000000', -8640000000000000],
+        ['epochMilliseconds', null, null, { nullable: true }],
+        ['epochSeconds', 1672531200, 1672531200],
+        ['epochSeconds', '-8640000000000', -8640000000000]
+      ]
+
+      for (const [type, value, expected, options = {}] of cases) {
+        assert.deepStrictEqual(validateTemporal(type, value, options), {
+          validatedObject: { field: expected },
+          errors: {}
+        })
+      }
+    })
+
+    it('should reject ambiguous, non-integer, and out-of-range epoch values', () => {
+      const cases = [
+        ['epochMilliseconds', ''],
+        ['epochMilliseconds', ' 1 '],
+        ['epochMilliseconds', '01'],
+        ['epochMilliseconds', '+1'],
+        ['epochMilliseconds', '-0'],
+        ['epochMilliseconds', '1.0'],
+        ['epochMilliseconds', '1e3'],
+        ['epochMilliseconds', true],
+        ['epochMilliseconds', []],
+        ['epochMilliseconds', Infinity],
+        ['epochMilliseconds', 8640000000000001],
+        ['epochMilliseconds', -8640000000000001],
+        ['epochSeconds', 8640000000001]
+      ]
+
+      for (const [type, value] of cases) {
+        assertError(validateTemporal(type, value).errors, 'field', 'TYPE_CAST_FAILED')
+      }
+    })
+
+    it('should preserve valid RFC 3339 datetimes and enforce fractional precision', () => {
+      const cases = [
+        ['2025-01-01T12:30:00Z'],
+        ['2025-01-01T12:30:00.123456Z'],
+        ['2025-01-01T12:30:00+08:00'],
+        ['2024-02-29T23:59:59-07:30'],
+        ['2025-01-01T12:30:00.123Z', { temporalPrecision: 3 }]
+      ]
+
+      for (const [value, options = {}] of cases) {
+        assert.deepStrictEqual(validateTemporal('dateTime', value, options), {
+          validatedObject: { field: value },
+          errors: {}
+        })
+      }
+
+      const rejectedCases = [
+        ['2025-01-01T12:30:00.1234Z', { temporalPrecision: 3 }],
+        ['2023-02-29T12:30:00Z'],
+        ['2025-01-01T12:30Z'],
+        ['2025-01-01T12:30:00'],
+        ['2025-01-01 12:30:00'],
+        ['2025-01-01T24:00:00Z'],
+        ['2025-01-01T12:60:00Z'],
+        ['2025-01-01T12:30:60Z'],
+        ['2025-01-01T12:30:00+24:00'],
+        ['2025-01-01T12:30:00+08:60'],
+        ['2025-01-01T12:30:00+08'],
+        ['2025-01-01T12:30:00z'],
+        [' 2025-01-01T12:30:00Z '],
+        [0],
+        [new Date('2025-01-01T12:30:00Z')]
+      ]
+
+      for (const [value, options = {}] of rejectedCases) {
+        assertError(validateTemporal('dateTime', value, options).errors, 'field', 'TYPE_CAST_FAILED')
+      }
+    })
+
+    it('should validate calendar dates without coercion', () => {
+      const acceptedCases = [
+        ['2025-01-01', '2025-01-01'],
+        ['2024-02-29', '2024-02-29'],
+        ['2000-02-29', '2000-02-29'],
+        ['', null, { nullOnEmpty: true }],
+        [null, null, { nullable: true }]
+      ]
+
+      for (const [value, expected, options = {}] of acceptedCases) {
+        assert.deepStrictEqual(validateTemporal('date', value, options), {
+          validatedObject: { field: expected },
+          errors: {}
+        })
+      }
+
+      const rejectedValues = [
+        '2023-02-29',
+        '1900-02-29',
+        '2024-02-30',
+        '2024-04-31',
+        '2024-00-01',
+        '2024-01-00',
+        '2024-13-01',
+        '2024-1-01',
+        '2025-01-01T00:00:00Z',
+        'March 1, 2024',
+        0,
+        new Date('2025-01-01T00:00:00Z'),
+        new Date('invalid'),
+        ''
+      ]
+
+      for (const value of rejectedValues) {
+        assertError(validateTemporal('date', value).errors, 'field', 'TYPE_CAST_FAILED')
+      }
+    })
+
+    it('should validate offset-free wall-clock times without coercion', () => {
+      const acceptedCases = [
+        ['03:15'],
+        ['03:15:00'],
+        ['03:15:00.123456'],
+        ['03:15:00.123', { temporalPrecision: 3 }]
+      ]
+
+      for (const [value, options = {}] of acceptedCases) {
+        assert.deepStrictEqual(validateTemporal('time', value, options), {
+          validatedObject: { field: value },
+          errors: {}
+        })
+      }
+
+      const rejectedCases = [
+        ['03:15:00.1234', { temporalPrecision: 3 }],
+        ['03:15:00.1', { temporalPrecision: 0 }],
+        ['3:15'],
+        ['03:15.1'],
+        ['24:00'],
+        ['03:60'],
+        ['03:15:60'],
+        ['03:15:00Z'],
+        ['2025-01-01T03:15:00Z'],
+        [new Date('2025-01-01T03:15:00Z')]
+      ]
+
+      for (const [value, options = {}] of rejectedCases) {
+        assertError(validateTemporal('time', value, options).errors, 'field', 'TYPE_CAST_FAILED')
+      }
+    })
+  })
+
+  it('should preserve calendar dates independently of the process timezone', () => {
+    const moduleUrl = new URL('./src/index.js', import.meta.url).href
+    const script = `
+      import { createSchema } from ${JSON.stringify(moduleUrl)}
+      const schema = createSchema({ publishedOn: { type: 'date' } })
+      const result = schema.create({ publishedOn: '2024-02-29' })
+      process.stdout.write(JSON.stringify(result))
+    `
+
+    for (const timezone of ['UTC', 'Australia/Perth', 'America/Los_Angeles', 'Pacific/Kiritimati']) {
+      const result = spawnSync(process.execPath, ['--input-type=module', '--eval', script], {
+        env: { ...process.env, TZ: timezone },
+        encoding: 'utf8'
+      })
+
+      assert.strictEqual(result.status, 0, result.stderr)
+      assert.deepStrictEqual(JSON.parse(result.stdout), {
+        validatedObject: { publishedOn: '2024-02-29' },
+        errors: {}
+      })
+    }
+  })
+
+  it('should keep temporal values stable across JSON transport and repeated validation', () => {
+    const schema = createSchema({
+      publishedOn: { type: 'date' },
+      opensAt: { type: 'time' },
+      recordedAt: { type: 'dateTime' }
+    })
+    const input = {
+      publishedOn: '2024-02-29',
+      opensAt: '03:15:00.123456',
+      recordedAt: '2024-02-29T03:15:00.123456+08:00'
+    }
+
+    const firstResult = schema.create(input)
+    assert.deepStrictEqual(firstResult, { validatedObject: input, errors: {} })
+
+    const transported = JSON.parse(JSON.stringify(firstResult.validatedObject))
+    assert.deepStrictEqual(schema.create(transported), { validatedObject: input, errors: {} })
+  })
+
+  it('should reject the removed timestamp type instead of preserving an ambiguous alias', () => {
+    const schema = createSchema({ field: { type: 'timestamp' } })
+    assert.throws(
+      () => schema.create({ field: 1672531200000 }),
+      /No casting function for type: timestamp/
+    )
+
+    const nullableSchema = createSchema({ field: { type: 'timestamp', nullable: true } })
+    assert.throws(
+      () => nullableSchema.create({ field: null }),
+      /No casting function for type: timestamp/
+    )
+  })
+
+  it('should reject invalid temporalPrecision definitions', () => {
+    for (const temporalPrecision of [-1, 1.5, '3']) {
+      const schema = createSchema({
+        field: { type: 'time', temporalPrecision }
+      })
+      assert.throws(
+        () => schema.create({ field: '03:15:00' }),
+        /temporalPrecision for "field" must be a non-negative integer/
+      )
+    }
+
+    const dateSchema = createSchema({
+      field: { type: 'date', temporalPrecision: 3 }
+    })
+    assert.throws(
+      () => dateSchema.create({ field: '2025-01-01' }),
+      /temporalPrecision can only be used on time or dateTime fields/
+    )
   })
 
   it("type:'serialize' should process an object to a string", () => {

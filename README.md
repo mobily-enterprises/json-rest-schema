@@ -33,6 +33,22 @@ Preview that built site locally with:
 npm run docs:preview
 ```
 
+### Upgrading to 1.0.17
+
+Version 1.0.17 intentionally replaces the old permissive temporal behavior. There are no compatibility aliases or legacy parsers:
+
+* `date`, `time`, and `dateTime` now validate JSON strings and return the exact input string unchanged. They no longer return JavaScript `Date` objects or parse numbers, locale text, SQL datetime strings, or other `Date.parse()` inputs.
+* `date` accepts only a real calendar date written as `YYYY-MM-DD`.
+* `time` accepts an offset-free `HH:MM[:SS[.fraction]]` value.
+* `dateTime` accepts a calendar-valid RFC 3339 datetime with seconds and a mandatory `Z` or `±HH:MM` offset.
+* `timestamp` has been removed. Use `epochMilliseconds` or `epochSeconds`; both accept an integer number or canonical base-10 integer string and return a number.
+* `temporalPrecision` limits fractional-second digits for `time` and `dateTime`. Excess precision is rejected, never truncated.
+* Applied defaults now pass through the normal type and validator pipeline.
+
+Use this prompt with an agent working on an existing application:
+
+> Upgrade this application to `json-rest-schema` 1.0.17 without adding compatibility or legacy parsing. Find every temporal schema field and trace its producers, consumers, HTTP representation, database mapping, defaults, fixtures, and tests. Replace `type: 'timestamp'` with `epochMilliseconds` or `epochSeconds` only after verifying the actual unit. Keep `date` values as valid `YYYY-MM-DD` strings, `time` values as offset-free `HH:MM[:SS[.fraction]]` strings, and `dateTime` values as RFC 3339 strings with seconds and an explicit timezone. Convert JavaScript `Date` objects explicitly at application boundaries; do not make the schema accept them. For `datetime-local` controls, apply the product's intended timezone before producing RFC 3339—do not append `Z` unless the entered value is defined as UTC. Remove code that expects validation to return a `Date` or normalize a temporal string. Make storage adapters translate between these wire strings and database-native values. Update defaults to the new forms. Add tests for impossible dates, timezone-required datetimes, fractional precision, JSON round trips, repeated validation, captured HTTP payloads, and the relevant database round trip. Run the full test, lint, typecheck, and build suites and report every changed temporal contract.
+
 The published docs site is the best place to read the same manual as shorter chapters for:
 
 * create / replace / patch semantics
@@ -1989,7 +2005,7 @@ Key points:
 * **Recursive graph support**: runtime validation and `toJsonSchema()` both support self-recursive schema graphs. Direct self-recursive object fields point back to `#`, while recursive nested contracts are emitted through `definitions`.
 * **Opaque bags stay opaque**: `type: 'object'` plus `additionalProperties: true` exports as a permissive object field and does not invent child property rules.
 * **Single source of truth**: only rules owned by `json-rest-schema` are exported. External metadata keys from other layers are ignored.
-* **Passive metadata preserved**: schema-owned passive metadata such as `precision`, `scale`, `unsigned`, and `temporalPrecision` is preserved under `x-json-rest-schema.metadata`.
+* **Schema metadata preserved**: schema-owned metadata such as `precision`, `scale`, and `unsigned` is preserved under `x-json-rest-schema.metadata`. `temporalPrecision` is both enforced at runtime/exported as a pattern constraint and preserved as metadata.
 * **Custom rules**: if a custom type or validator needs transport export support, attach a `toJsonSchema()` hook to the handler. If you register a custom validator without that hook, export fails loudly instead of silently drifting.
 
 ### Worked nested export example
@@ -2355,10 +2371,11 @@ A field's `type` defines how the input value will be converted before any other 
 | `boolean`| Converts the input to a boolean using explicit true/false tokens such as `true`, `false`, `1`, `0`, `yes`, `no`, `on`, and `off`. Unknown values fail validation. |
 | `array` | Ensures the value is an array. If the input is not already an array, it will be wrapped in one (e.g., `'tag1'` becomes `['tag1']`). If `items` is present, every item is validated recursively. |
 | `id` | Parses the value into a positive safe integer identifier. It rejects non-canonical forms such as leading zeroes or strings with junk suffixes. |
-| `date` | Converts a valid date string or timestamp into a `Date` object normalized to midnight UTC for that calendar day. |
-| `dateTime`| Converts a valid date string or timestamp into a `Date` object. MySQL-style `YYYY-MM-DD HH:MM:SS` strings are interpreted as UTC. |
-| `timestamp`| Converts the input to a number, suitable for storing Unix timestamps. |
-| `time` | Converts the input to a normalized `HH:MM:SS` string. |
+| `date` | Validates a real calendar date in exact `YYYY-MM-DD` form and returns the string unchanged. |
+| `dateTime`| Validates an RFC 3339 datetime with seconds and a mandatory `Z` or `±HH:MM` timezone, then returns the string unchanged. |
+| `time` | Validates an offset-free wall-clock time in `HH:MM[:SS[.fraction]]` form and returns the string unchanged. |
+| `epochMilliseconds`| Converts an integer number or canonical base-10 integer string representing milliseconds since the Unix epoch to a number. Values must fit the JavaScript date range. |
+| `epochSeconds`| Converts an integer number or canonical base-10 integer string representing seconds since the Unix epoch to a number. Values must fit the equivalent JavaScript date range. |
 | `serialize`| Converts any JavaScript value (including objects with circular references) into a single JSON-like string using `flatted`. |
 | `object` | Requires a plain object value. With `schema`, it becomes a nested object contract. With `values`, it becomes a typed object map. With `additionalProperties: true`, it becomes either an opaque pass-through object bag or a passthrough nested object when combined with `schema`. Without any of those options, it is simply a validated plain object value with no child-field rules. |
 | `blob` | Passes the value through unchanged. Intended for binary data like files that don't need casting. |
@@ -2385,11 +2402,11 @@ Validators are rules that run after a value has been cast to its proper type.
 | `uppercase: true` | **Transforms** the string to all uppercase. |
 | `strictBoolean: true` | Restricts a `boolean` field so the original input must already be a real boolean. |
 | `validator: <function>`| Allows you to provide your own **synchronous** custom validation function for complex, one-off logic. |
-| `defaultTo: <value>` | If the field is not present in the input object, this value will be used in validation modes that apply defaults. Can be a value or a function that returns a value. |
+| `defaultTo: <value>` | If the field is not present in the input object, this value will be passed through the same type and validator pipeline in validation modes that apply defaults. Can be a value or a function that returns a value. |
 | `unsigned: true` | Passive schema metadata indicating non-negative numeric storage intent. Preserved in transport export metadata. |
 | `precision: <number>` | Passive schema metadata for decimal total digits. Preserved in transport export metadata. |
 | `scale: <number>` | Passive schema metadata for decimal fractional digits. Preserved in transport export metadata. |
-| `temporalPrecision: <number>` | Passive schema metadata for time or datetime fractional-second precision. Preserved in transport export metadata. |
+| `temporalPrecision: <number>` | For `time` and `dateTime`, sets the maximum number of fractional-second digits. Must be a non-negative integer; excess precision is rejected. Also preserved in transport export metadata. |
 
 ---
 

@@ -3,5 +3,8 @@
  */
 
 export function isNumericDefinition (definition) {
-  return definition?.type === 'number' || definition?.type === 'integer'
+  return definition?.type === 'number' ||
+    definition?.type === 'integer' ||
+    definition?.type === 'epochMilliseconds' ||
+    definition?.type === 'epochSeconds'
 }

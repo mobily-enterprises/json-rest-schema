@@ -4,6 +4,15 @@
 
 import * as flatted from 'flatted'
 import { isNumericDefinition } from './definition-helpers.js'
+import {
+  castEpochInteger,
+  EPOCH_MILLISECONDS_LIMIT,
+  EPOCH_SECONDS_LIMIT,
+  isValidDate,
+  isValidDateTime,
+  isValidTime,
+  resolveTemporalPrecision
+} from './temporal.js'
 import { isPlainObject } from '../utils/object-helpers.js'
 
 /**
@@ -144,110 +153,29 @@ const CorePlugin = {
       if (numberValue === null || !Number.isInteger(numberValue)) context.throwTypeError()
       return numberValue
     })
-    addType('timestamp', context => {
-      if (typeof context.value === 'string' && context.value.trim() === '') {
-        context.throwTypeError()
-      }
-      const r = Number(context.value)
-      if (isNaN(r)) context.throwTypeError()
-      return r
+    addType('epochMilliseconds', context => {
+      const epochMilliseconds = castEpochInteger(context.value, EPOCH_MILLISECONDS_LIMIT)
+      if (epochMilliseconds === null) context.throwTypeError()
+      return epochMilliseconds
+    })
+    addType('epochSeconds', context => {
+      const epochSeconds = castEpochInteger(context.value, EPOCH_SECONDS_LIMIT)
+      if (epochSeconds === null) context.throwTypeError()
+      return epochSeconds
     })
     addType('dateTime', context => {
-      if (typeof context.value === 'string' && context.value.trim() === '') {
-        context.throwTypeError()
-      }
-
-      // If already a Date object, return it
-      if (context.value instanceof Date) {
-        if (isNaN(context.value.getTime())) context.throwTypeError()
-        return context.value
-      }
-
-      // Handle string values
-      if (typeof context.value === 'string') {
-        // Detect MySQL datetime format: 'YYYY-MM-DD HH:MM:SS'
-        const isMySQLFormat = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/.test(context.value) &&
-                             !context.value.includes('T') &&
-                             !context.value.includes('Z')
-
-        if (isMySQLFormat) {
-          // Convert to ISO format and force UTC interpretation
-          const d = new Date(context.value.replace(' ', 'T') + 'Z')
-          if (isNaN(d.getTime())) {
-            context.throwTypeError()
-          }
-          return d
-        }
-      }
-
-      // Try to parse the value normally
-      const d = new Date(context.value)
-      if (isNaN(d.getTime())) {
-        context.throwTypeError()
-      }
-
-      // Return the Date object directly - let Knex handle the database formatting
-      return d
+      const temporalPrecision = resolveTemporalPrecision(context.definition, context.fieldName)
+      if (!isValidDateTime(context.value, temporalPrecision)) context.throwTypeError()
+      return context.value
     })
     addType('date', context => {
-      if (!context.value || context.value === '') return null
-
-      // Parse the input value to a Date object
-      let d
-      if (context.value instanceof Date) {
-        d = context.value
-      } else {
-        let dateStr = String(context.value)
-
-        // If it's just a date (YYYY-MM-DD), add time at UTC midnight
-        if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
-          dateStr += 'T00:00:00Z'
-        }
-
-        d = new Date(dateStr)
-      }
-
-      if (isNaN(d.getTime())) {
-        context.throwTypeError()
-      }
-
-      // Normalize to midnight UTC
-      const normalized = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()))
-      return normalized
+      if (!isValidDate(context.value)) context.throwTypeError()
+      return context.value
     })
     addType('time', context => {
-      if (!context.value || context.value === '') return null
-
-      // Try to parse as time string (HH:MM:SS or HH:MM)
-      if (typeof context.value === 'string') {
-        // Match HH:MM:SS or HH:MM format
-        const timeMatch = context.value.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/)
-        if (timeMatch) {
-          const hours = parseInt(timeMatch[1], 10)
-          const minutes = parseInt(timeMatch[2], 10)
-          const seconds = timeMatch[3] ? parseInt(timeMatch[3], 10) : 0
-
-          // Validate ranges
-          if (hours >= 0 && hours <= 23 && minutes >= 0 && minutes <= 59 && seconds >= 0 && seconds <= 59) {
-            // Return normalized HH:MM:SS format as string
-            // Note: We return string because most databases don't have a true time-only type
-            return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`
-          }
-        }
-      }
-
-      // Try to extract time from a Date object or datetime string
-      try {
-        const d = new Date(context.value)
-        if (!isNaN(d.getTime())) {
-          // Extract time portion in HH:MM:SS format
-          return d.toISOString().slice(11, 19)
-        }
-      } catch (e) {
-        // Invalid date
-      }
-
-      context.throwTypeError()
+      const temporalPrecision = resolveTemporalPrecision(context.definition, context.fieldName)
+      if (!isValidTime(context.value, temporalPrecision)) context.throwTypeError()
+      return context.value
     })
     addType('array', context => {
       if (context.definition.type === 'array' && !Array.isArray(context.value)) {
@@ -442,7 +370,11 @@ const CorePlugin = {
     addValidator('unsigned', () => {}) // No-op, used for schema metadata
     addValidator('precision', () => {}) // No-op, used for schema metadata
     addValidator('scale', () => {}) // No-op, used for schema metadata
-    addValidator('temporalPrecision', () => {}) // No-op, used for schema metadata
+    addValidator('temporalPrecision', context => {
+      if (context.definition.type !== 'time' && context.definition.type !== 'dateTime') {
+        throw new Error(`temporalPrecision can only be used on time or dateTime fields (${context.fieldName}).`)
+      }
+    })
     addValidator('nullable', () => {}) // No-op, handled in Schema.js
     addValidator('nullOnEmpty', () => {}) // No-op, handled in Schema.js
     addValidator('defaultTo', () => {}) // No-op, handled in Schema.js

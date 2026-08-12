@@ -1,6 +1,6 @@
 /**
  * @file example.js
- * A comprehensive demonstration of all built-in validation types and rules.
+ * A broad demonstration of built-in validation types, rules, operations, and adapters.
  *
  * To Run:
  * 1. Ensure you have the full project structure (src/, package.json).
@@ -15,7 +15,7 @@ import { useSchemaField, useSchemaForm } from './src/adapters/vue.js'
 import { createVuetifyRule, fieldProps, getVuetifyErrorMessages } from './src/adapters/vuetify.js'
 import * as flatted from 'flatted'
 
-// --- A schema that uses every built-in type and validator ---
+// --- A schema that demonstrates common built-in types and validators ---
 const comprehensiveSchema = createSchema({
   // 'string' with various validators
   username: { type: 'string', required: true, minLength: 3, maxLength: 20, lowercase: true },
@@ -33,9 +33,12 @@ const comprehensiveSchema = createSchema({
   isActive: { type: 'boolean', defaultTo: false },
   hasAgreed: { type: 'boolean', required: true, validator: (val) => val === true ? undefined : 'You must agree to the terms.' },
 
-  // 'date' and 'dateTime' types
+  // JSON-native temporal strings and explicit epoch units
   birthDate: { type: 'date', required: true },
   lastLogin: { type: 'dateTime', nullable: true },
+  dailyReminderTime: { type: 'time' },
+  lastLoginEpochMilliseconds: { type: 'epochMilliseconds' },
+  sessionStartedEpochSeconds: { type: 'epochSeconds' },
 
   // 'array' type for handling lists
   tags: { type: 'array', notEmpty: true, defaultTo: ['general'] },
@@ -55,16 +58,19 @@ const comprehensiveSchema = createSchema({
 
 // --- Input Data Sets ---
 
-// 1. Data designed to fail every possible validation rule
+// 1. Data designed to demonstrate several validation failures
 const invalidInput = {
   username: 'Bo', // Fails minLength
-  // 'fullName' is missing to test its defaultTo value later (only on valid runs)
+  // 'fullName' is missing, so its default is still applied alongside these errors
   description: 'This description is much too long and will be cut short', // Will be truncated
   age: 17, // Fails min value
   userId: 'not-a-number', // Fails 'id' type casting
   hasAgreed: false, // Fails custom 'validator' function
   birthDate: 'invalid-date-format', // Fails 'date' type casting
   lastLogin: null, // This is actually VALID because of 'nullable: true'
+  dailyReminderTime: '25:00', // Fails the time range check
+  lastLoginEpochMilliseconds: '1.5', // Epoch values must be integers
+  sessionStartedEpochSeconds: '01', // Canonical integer strings cannot have leading zeroes
   tags: [], // Fails 'notEmpty'
   optionalComment: '', // Will be cast to null, which is valid
   requiredComment: '', // Fails 'notEmpty'
@@ -75,13 +81,16 @@ const invalidInput = {
 // 2. Data designed to pass validation and showcase casting/defaultTo
 const validInput = {
   username: '  VALID_USER   ', // Will be trimmed and lowercased
-  description: 'A short note that is okay.', // Will not be truncated
+  description: 'Short note', // Already within the configured length
   age: '42', // Will be cast to number
   userId: '12345', // Will be cast to number
   isActive: 'on', // Will be cast to boolean true
   hasAgreed: true,
-  birthDate: '1980-05-15T12:00:00Z', // Will be cast to a Date normalized to UTC midnight
-  lastLogin: Date.now(), // Will be cast to a Date object
+  birthDate: '1980-05-15', // Calendar dates remain exact YYYY-MM-DD strings
+  lastLogin: '2025-01-15T08:30:00Z', // Datetimes require seconds and an explicit timezone
+  dailyReminderTime: '09:30:00.123', // Times are offset-free wall-clock strings
+  lastLoginEpochMilliseconds: '1736929800000', // Canonical strings are cast to numbers
+  sessionStartedEpochSeconds: '1736929800',
   tags: 'single-tag', // Will be cast to an array: ['single-tag']
   requiredComment: 'This is a valid comment.',
   // 'optionalComment' is missing, which is valid
@@ -190,8 +199,11 @@ function runComprehensiveExample () {
   console.log('Age cast to number:', validResult.age)
   console.log('\'isActive\' cast from "on" to boolean:', validResult.isActive)
   console.log('\'tags\' cast from string to array:', validResult.tags)
-  console.log('Birth date is a Date object:', validResult.birthDate instanceof Date)
-  console.log('Last login is a Date object:', validResult.lastLogin instanceof Date)
+  console.log('Birth date preserved as a string:', validResult.birthDate)
+  console.log('Last login preserved as an RFC 3339 string:', validResult.lastLogin)
+  console.log('Reminder time preserved as a string:', validResult.dailyReminderTime)
+  console.log('Epoch milliseconds cast to a number:', validResult.lastLoginEpochMilliseconds)
+  console.log('Epoch seconds cast to a number:', validResult.sessionStartedEpochSeconds)
   console.log('Serialized metadata is a string:', typeof validResult.metadata === 'string')
   const restored = flatted.parse(validResult.metadata)
   console.log('Circular reference in restored metadata is intact:', restored.self === restored)

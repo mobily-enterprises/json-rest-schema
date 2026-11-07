@@ -2394,6 +2394,8 @@ Validators are rules that run after a value has been cast to its proper type.
 | `min: <number>` | For `number` types, validates the minimum value. |
 | `max: <number>` | For `number` types, validates the maximum value. |
 | `enum: <array>` | Restricts the field to one of the declared values. Exported as a standard JSON Schema `enum`. |
+| `minItems: <integer>` | For `array` types, validates the minimum number of items (`MIN_ITEMS`). Exported as JSON Schema `minItems`. `createSchema()` throws when it is not a non-negative integer, is set on a field that is not an array, or is above `maxItems`. |
+| `maxItems: <integer>` | For `array` types, validates the maximum number of items (`MAX_ITEMS`). Exported as JSON Schema `maxItems`. `createSchema()` throws as for `minItems`. |
 | `notEmpty: true` | The field cannot be an empty string (`''`). This is different from `required`, as an empty string is still a defined value. |
 | `length: <number>`| For `string` types, it **truncates** the string to the specified length. For `number` types, it throws an error if the number of digits in the original input exceeds the specified length. |
 | `nullable: true`| Allows the value for this field to be `null`. By default, `null` is not allowed. |

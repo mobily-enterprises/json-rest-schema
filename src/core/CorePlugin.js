@@ -359,6 +359,17 @@ const CorePlugin = {
         context.throwParamError('RANGE_EXCEEDED', 'Numeric value is out of the allowed character range.', { max: context.parameterValue, actual: String(context.valueBeforeCast).length })
       }
     })
+    // Array lengths, as JSON Schema's minItems and maxItems; createSchema refuses them anywhere else.
+    addValidator('minItems', context => {
+      if (Array.isArray(context.value) && context.value.length < context.parameterValue) {
+        context.throwParamError('MIN_ITEMS', `Must have at least ${context.parameterValue} items.`, { min: context.parameterValue, actual: context.value.length })
+      }
+    })
+    addValidator('maxItems', context => {
+      if (Array.isArray(context.value) && context.value.length > context.parameterValue) {
+        context.throwParamError('MAX_ITEMS', `Must have no more than ${context.parameterValue} items.`, { max: context.parameterValue, actual: context.value.length })
+      }
+    })
     addValidator('notEmpty', context => {
       if (context.parameterValue && typeof context.value === 'string' && context.value === '') {
         context.throwParamError('NOT_EMPTY', 'Field cannot be empty.')

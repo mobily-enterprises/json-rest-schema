@@ -98,6 +98,8 @@ const BUILTIN_VALIDATOR_EXPORTERS = {
     ? { pattern: parameterValue instanceof RegExp ? parameterValue.source : parameterValue }
     : null,
   enum: ({ parameterValue }) => ({ enum: parameterValue }),
+  minItems: ({ definition, parameterValue }) => definition.type === 'array' ? { minItems: parameterValue } : null,
+  maxItems: ({ definition, parameterValue }) => definition.type === 'array' ? { maxItems: parameterValue } : null,
   notEmpty: ({ parameterValue, definition }) => {
     if (!parameterValue) return null
     if (definition.type === 'array') return null

@@ -3776,6 +3776,45 @@ describe('4. Core Plugin: Validator Handlers', () => {
     assertError(errors, 'num', 'RANGE_EXCEEDED')
   })
 
+  it('`minItems`/`maxItems` should bound array lengths and export them', () => {
+    const schema = createSchema({
+      tags: { type: 'array', required: true, minItems: 1, maxItems: 3, items: { type: 'string' } },
+      notes: { type: 'array', maxItems: 0 }
+    })
+
+    const { errors: tooFew } = schema.create({ tags: [] })
+    assertError(tooFew, 'tags', 'MIN_ITEMS')
+    assert.deepStrictEqual(tooFew.tags.params, { min: 1, actual: 0 })
+
+    const { errors: tooMany } = schema.create({ tags: ['a', 'b', 'c', 'd'], notes: ['x'] })
+    assertError(tooMany, 'tags', 'MAX_ITEMS')
+    assertError(tooMany, 'notes', 'MAX_ITEMS')
+    assert.deepStrictEqual(tooMany.tags.params, { max: 3, actual: 4 })
+
+    for (const tags of [['a'], ['a', 'b', 'c']]) {
+      assert.deepStrictEqual(schema.create({ tags }).errors, {})
+    }
+    assert.deepStrictEqual(schema.patch({ notes: [] }).errors, {})
+
+    const exported = schema.toJsonSchema()
+    assert.strictEqual(exported.properties.tags.minItems, 1)
+    assert.strictEqual(exported.properties.tags.maxItems, 3)
+    assert.strictEqual(exported.properties.notes.maxItems, 0)
+  })
+
+  it('`minItems`/`maxItems` should be refused at definition where they would not bound an array', () => {
+    for (const [structure, message] of [
+      [{ name: { type: 'string', minItems: 1 } }, /Field "name" minItems must be a non-negative integer on an array field/],
+      [{ tags: { type: 'array', maxItems: -1 } }, /Field "tags" maxItems must be a non-negative integer/],
+      [{ tags: { type: 'array', minItems: '1' } }, /Field "tags" minItems must be a non-negative integer/],
+      [{ tags: { type: 'array', minItems: 1.5 } }, /Field "tags" minItems must be a non-negative integer/],
+      [{ tags: { type: 'array', minItems: 3, maxItems: 2 } }, /Field "tags" minItems \(3\) is above its maxItems \(2\)/],
+      [{ grid: { type: 'array', items: { type: 'string', minItems: 1 } } }, /Field "grid\.\[\]" minItems must be a non-negative integer on an array field/]
+    ]) {
+      assert.throws(() => createSchema(structure), message)
+    }
+  })
+
   it('`notEmpty` should fail on empty strings', () => {
     const schema = createSchema({ field: { type: 'string', notEmpty: true } })
     const { errors } = schema.create({ field: '' })

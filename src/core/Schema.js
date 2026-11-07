@@ -41,6 +41,7 @@ import {
   setOwnProperty
 } from '../utils/path-helpers.js'
 import { isPlainObject } from '../utils/object-helpers.js'
+import { assertArrayLengthDefinitions } from './definition-helpers.js'
 
 function isThenable (value) {
   return value !== null &&
@@ -405,6 +406,7 @@ export class Schema {
    * @param {object} [operations={}] Per-schema operation descriptors.
    */
   constructor (structure, types, validators, operations = {}) {
+    assertArrayLengthDefinitions(structure)
     this.structure = structure
     this.types = freezeOwnMap(types)
     this.validators = freezeOwnMap(validators)

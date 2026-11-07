@@ -227,6 +227,9 @@ function createIntrospectionSnapshot (value) {
   return freezeIntrospectionValue(cloneIntrospectionValue(value))
 }
 
+// Each schema's getFieldDefinitions() snapshot, copied on its first call. It is deeply frozen, so every caller shares it.
+const fieldDefinitionSnapshots = new WeakMap()
+
 function resolveDefinitionFromSchemaPath (schema, pathSegments, basePath = '') {
   if (!isSchemaInstance(schema)) return null
   if (!Array.isArray(pathSegments) || pathSegments.length < 1) return null
@@ -1400,11 +1403,15 @@ export class Schema {
   }
 
   /**
-   * Returns a frozen snapshot map of the schema's top-level field definitions.
+   * Returns a frozen snapshot map of the schema's top-level field definitions, copied on the first call and shared by
+   * every later one: finish building a schema (a recursive `items`, say) before introspecting it.
    * @returns {object}
    */
   getFieldDefinitions () {
-    return createIntrospectionSnapshot(this.structure)
+    if (!fieldDefinitionSnapshots.has(this)) {
+      fieldDefinitionSnapshots.set(this, createIntrospectionSnapshot(this.structure))
+    }
+    return fieldDefinitionSnapshots.get(this)
   }
 
   /**

@@ -417,7 +417,7 @@ Method names are generated automatically from operation names. Names that alread
 
 Schema instances also expose three read-only introspection helpers:
 
-* `schema.getFieldDefinitions()` returns a frozen snapshot map of the top-level field definitions.
+* `schema.getFieldDefinitions()` returns a frozen snapshot map of the top-level field definitions. It is copied on the first call and shared by every later one, so finish building a schema (a recursive `items`, for example) before introspecting it.
 * `schema.getFieldDefinition(path)` resolves one field definition by dotted path, including nested object fields and numeric array segments such as `roles.0.id`, and returns it as a frozen snapshot.
 * `schema.getFieldMessages(path)` returns the field's `messages` object as a frozen snapshot, or `{}` when none exist.
 

@@ -143,6 +143,34 @@ describe('1. Core API (`createSchema`)', () => {
     })
   })
 
+  it('should copy field definitions once per schema however often they are introspected', () => {
+    for (const calls of [10, 200]) {
+      let copies = 0
+      const name = { type: 'string' }
+      Object.defineProperty(name, 'label', {
+        enumerable: true,
+        get () {
+          copies += 1
+          return 'Name'
+        }
+      })
+      const schema = createSchema({ name })
+      copies = 0
+
+      const snapshots = new Set()
+      for (let index = 0; index < calls; index += 1) {
+        snapshots.add(schema.getFieldDefinitions())
+      }
+
+      assert.strictEqual(copies, 1, `${calls} introspections copied the definitions ${copies} times`)
+      assert.strictEqual(snapshots.size, 1)
+      const [snapshot] = snapshots
+      assert.deepStrictEqual(snapshot, { name: { type: 'string', label: 'Name' } })
+      assert.notStrictEqual(snapshot.name, name)
+      assert.ok(Object.isFrozen(snapshot) && Object.isFrozen(snapshot.name))
+    }
+  })
+
   it('should return detached frozen introspection snapshots that cannot change runtime validation', () => {
     const workspaceSchema = createSchema({
       slug: {

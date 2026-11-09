@@ -363,6 +363,24 @@ describe('1. Core API (`createSchema`)', () => {
     assert.strictEqual(validatedObject.status, 'ACTIVE')
   })
 
+  it('should merge a factory made before a built-in type was registered over with schemas made after it', () => {
+    const coreFactory = createSchemaFactory()
+    const earlySchema = coreFactory.createFactory()({ name: { type: 'string' } })
+    coreFactory.addType('blob', ctx => {
+      if (!(ctx.value instanceof Uint8Array)) ctx.throwTypeError()
+      return ctx.value
+    })
+    const laterSchema = coreFactory({ data: { type: 'blob' } })
+
+    for (const sources of [[earlySchema, laterSchema], [laterSchema, earlySchema]]) {
+      const merged = createSchema.createFactory(sources)({ name: { type: 'string' }, data: { type: 'blob' } })
+      assert.strictEqual(Object.keys(merged.create({ name: 'a', data: new Uint8Array(1) }).errors).length, 0)
+      assertError(merged.create({ name: 'a', data: 'text' }).errors, 'data', 'TYPE_CAST_FAILED')
+    }
+    // Two factories that each installed the core types merge as well.
+    assert.doesNotThrow(() => createSchema.createFactory([createSchemaFactory()({}), earlySchema]))
+  })
+
   it('should reject same-source custom type closures with different captured state during merge', () => {
     const makeSchemaWithPrefix = prefix => {
       const schemaFactory = createSchemaFactory({ installCore: false })

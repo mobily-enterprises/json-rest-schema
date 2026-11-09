@@ -11,6 +11,9 @@ import { setOwnProperty } from './utils/path-helpers.js'
 const factoryTypesBySource = new WeakMap()
 const factoryValidatorsBySource = new WeakMap()
 const registryMetadataSymbol = Symbol.for('json-rest-schema.registry-metadata')
+// The handlers CorePlugin installed. A merge lets one give way to a handler registered over it (json-rest-api's
+// stricter blob, say), so a factory made before that registration still composes with schemas made after it.
+const coreHandlers = new WeakSet()
 
 function registerTypeHandler (types, name, handler) {
   if (typeof handler !== 'function') {
@@ -109,14 +112,13 @@ function normalizeFactorySources (sources) {
   return sources
 }
 
-function areEquivalentHandlers (left, right) {
-  return left === right
-}
-
 function mergeRegistryHandlers (target, source, kind) {
   for (const [name, handler] of Object.entries(source)) {
-    if (Object.hasOwn(target, name) && !areEquivalentHandlers(target[name], handler)) {
-      throw new Error(`Cannot merge schema factories with conflicting ${kind} "${name}".`)
+    if (Object.hasOwn(target, name) && target[name] !== handler) {
+      if (coreHandlers.has(handler)) continue
+      if (!coreHandlers.has(target[name])) {
+        throw new Error(`Cannot merge schema factories with conflicting ${kind} "${name}".`)
+      }
     }
     setOwnProperty(target, name, handler)
   }
@@ -195,7 +197,10 @@ function createSchemaFactory ({
   }
 
   if (installCore) {
-    factory.use(CorePlugin)
+    installPlugin(CorePlugin, {
+      addType: (name, handler) => { coreHandlers.add(handler); factory.addType(name, handler) },
+      addValidator: (name, handler) => { coreHandlers.add(handler); factory.addValidator(name, handler) }
+    })
   }
 
   return factory
